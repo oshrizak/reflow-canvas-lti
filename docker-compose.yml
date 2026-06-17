@@ -1,0 +1,30 @@
+services:
+  connector:
+    build: .
+    image: reflow-canvas-lti:dev
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      # Reach the host machine where Reflow Core is running by default.
+      # Override REFLOW_API_BASE_URL in .env if Reflow Core runs in this compose project too.
+      REFLOW_API_BASE_URL: ${REFLOW_API_BASE_URL:-http://host.docker.internal:8080}
+    volumes:
+      - ./keys:/app/keys:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

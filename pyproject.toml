@@ -1,0 +1,116 @@
+[project]
+name = "reflow-canvas-lti"
+version = "0.1.0"
+description = "Canvas LTI connector for Equalify Reflow — bridges Canvas LMS with the Reflow document accessibility API"
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+requires-python = ">=3.11,<3.13"
+authors = [{ name = "Equalify Reflow contributors" }]
+dependencies = [
+    # Web + config
+    "pydantic>=2.0.0",
+    "pydantic-settings>=2.6.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "python-multipart>=0.0.12",
+    "jinja2>=3.1.0",
+    "itsdangerous>=2.2.0",
+    # State + clients
+    "redis>=5.0.0",
+    "httpx>=0.27.0",
+    "httpx-sse>=0.4.0",
+    "boto3>=1.35.0",
+    "aioboto3>=15.1.0",
+    # LTI 1.3 / JWT
+    "pylti1p3>=2.0.0",
+    "jwcrypto>=1.5.0",
+    "joserfc>=1.0.0",
+    # Canvas page generation (sanitize HTML, render markdown)
+    "bleach[css]>=6.1.0",
+    "mistune>=3.0.0",
+    "mdformat>=1.0.0",
+    # Alt-format generators
+    "ebooklib>=0.18",
+    "ocrmypdf>=16.0",
+    "pdf2image>=1.17.0",
+    # Observability
+    "prometheus-client>=0.19.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.21.0",
+    "pytest-cov>=6.0.0",
+    "pytest-mock>=3.15.1",
+    "pytest-xdist>=3.8.0",
+    "pytest-timeout>=2.4.0",
+    "respx>=0.21.1",
+    "mypy>=1.5.0",
+    "ruff>=0.8.0",
+    "types-redis>=4.6.0",
+    "testcontainers[redis]>=4.8.0",
+]
+
+[project.urls]
+"Homepage" = "https://github.com/EqualifyEverything/equalify-reflow"
+"Source" = "https://github.com/oshrizak/reflow-canvas-lti"
+"Issues" = "https://github.com/oshrizak/reflow-canvas-lti/issues"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["connector"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short --strict-markers --maxfail=10"
+pythonpath = ["."]
+timeout = 5
+timeout_func_only = true
+markers = [
+    "unit: Unit tests (fast <100ms, fully mocked)",
+    "integration: Integration tests (medium <5s, real Redis)",
+    "slow: End-to-end tests (>5s, talk to live services)",
+]
+
+[tool.coverage.run]
+source = ["connector"]
+omit = ["*/tests/*", "*/__pycache__/*", ".venv/*"]
+branch = true
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+src = ["connector", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+ignore = []
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["connector"]
+explicit_package_bases = true
+disable_error_code = ["type-arg"]
+
+[[tool.mypy.overrides]]
+module = ["pylti1p3.*", "jwcrypto.*", "ocrmypdf.*", "ebooklib.*", "bleach.*", "mistune.*"]
+ignore_missing_imports = true
