@@ -25,6 +25,7 @@ dependencies = [
     "pylti1p3>=2.0.0",
     "jwcrypto>=1.5.0",
     "joserfc>=1.0.0",
+    "cryptography>=42.0.0",
     # Canvas page generation (sanitize HTML, render markdown)
     "bleach[css]>=6.1.0",
     "mistune>=3.0.0",
