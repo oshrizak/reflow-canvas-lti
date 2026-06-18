@@ -701,7 +701,7 @@
       });
     }
 
-    // Re-check Claude-API consent on open so the "Authorization required…"
+    // Re-check AI-API consent on open so the "Authorization required…"
     // banner disappears for instructors who already accepted — including the
     // case where they just accepted in the consent tab (opened via the
     // button) without reloading the page. Also flips the footer to the
@@ -1316,7 +1316,7 @@
     if (c.agreed) return "";
     // Don't nag students — only instructors trigger paid processing.
     if (STATE.userRole !== "Instructor") return "";
-    var msg = "Authorization required to process new documents through the Claude API.";
+    var msg = "Authorization required to process new documents through the AI provider.";
     if (c.reason === "version_changed") {
       msg = "The Reflow disclaimer has been updated. Please re-authorize to continue using the tool.";
     }
@@ -1949,7 +1949,7 @@
     loadOAuthStatus().catch(function (e) {
       console.warn("Reflow Panorama: OAuth status fetch failed", e);
     });
-    // Load the Claude-API consent state too, so the modal can hide the
+    // Load the AI-API consent state too, so the modal can hide the
     // "Authorization required…" banner for instructors who already accepted
     // (and show "✓ Authorized" in the footer). Without this STATE.consent
     // stayed undefined and the banner showed unconditionally.

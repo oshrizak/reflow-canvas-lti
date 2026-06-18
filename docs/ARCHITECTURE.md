@@ -174,7 +174,7 @@ connector/
 │   ├── panorama.py         # Overlay dial data shapes
 │   ├── signals.py          # Per-document conversion-quality signals
 │   ├── privacy.py          # PII redaction + token encryption
-│   ├── spend_cap.py        # Per-course Claude spend cap
+│   ├── spend_cap.py        # Per-course AI spend cap
 │   ├── audit.py            # Append-only audit log
 │   └── errors.py           # CanvasApiError
 ├── api/

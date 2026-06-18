@@ -1196,7 +1196,7 @@ async def convert_file(
     # unconfigured, leaving the job in awaiting_review with no page, which the
     # bridge then never retries). Resetting the job to ``processing`` makes the
     # bridge re-drive it on its next tick (~30s) and build the page from the
-    # markdown that already exists — no slow re-run of the Claude pipeline.
+    # markdown that already exists — no slow re-run of the AI pipeline.
     # Only when there's no job at all do we queue a fresh conversion.
     job_id = await _lookup_job_for_file(redis, course_id, file_id)
     if job_id:

@@ -54,7 +54,7 @@ CHANGELOG.
   audio, AI translation.
 - **Automated WCAG checks** — axe-core-style checks against the generated HTML
   before publication.
-- **Per-course Claude API spend cap** — protects the upstream AI budget.
+- **Per-course AI API spend cap** — protects the upstream AI budget.
 
 ## Quick start (local dev)
 

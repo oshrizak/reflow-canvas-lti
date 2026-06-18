@@ -546,7 +546,7 @@ async def _scan_course(
                     course_id,
                 )
 
-        # Check the per-course monthly Claude-API spend cap. ``reserve_submission``
+        # Check the per-course monthly AI-API spend cap. ``reserve_submission``
         # atomically charges the pre-flight estimate and refunds it if we
         # would blow the cap. When the cap is unlimited (default 0), this
         # still records the spend - useful for cost reporting later.

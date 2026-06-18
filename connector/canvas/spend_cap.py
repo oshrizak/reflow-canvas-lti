@@ -1,4 +1,4 @@
-"""Per-course Claude-API spend cap.
+"""Per-course AI-API spend cap.
 
 Finance reasonably asks "what stops one runaway upload from costing $20k?".
 The answer is a hard monthly budget per Canvas course. Every time the
@@ -7,7 +7,7 @@ the course's monthly counter; if the counter is already over the cap,
 we skip the submission and log a warning so the operator can act.
 
 Why estimate-at-submit rather than measure-at-completion: the pipeline's
-actual Claude bill isn't known until Reflow returns, and by then the
+actual AI provider bill isn't known until Reflow returns, and by then the
 money is already spent. A pre-flight estimate is the only way to prevent
 runaway cost; the estimate doesn't have to be perfect, just close enough
 to flag obvious abuse (200-page textbook on Opus, etc.).

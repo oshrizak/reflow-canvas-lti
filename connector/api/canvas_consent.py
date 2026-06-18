@@ -392,10 +392,10 @@ def _render_page(
           Braille, plain text, translations) for students.</li>
       <li>Documents are scanned for personally identifiable information
           (names, SSNs, addresses, phone numbers) and PII is
-          <strong>redacted</strong> before any content is sent to the Claude API.</li>
-      <li>Content is processed by Anthropic's Claude API to produce the
-          accessible output. Anthropic <strong>does not use this content for
-          model training</strong>.</li>
+          <strong>redacted</strong> before any content is sent to the AI provider.</li>
+      <li>Content is processed by the third-party AI service to produce the
+          accessible output. The AI provider <strong>does not use this content
+          for model training</strong>.</li>
       <li>An audit log records when you use the tool and what files were
           processed. Faculty edits to accessible HTML are versioned.</li>
     </ul>
@@ -408,7 +408,7 @@ def _render_page(
         <label>
           <input type="checkbox" name="agree_processing" value="yes" required>
           <span>I authorize Reflow to process documents I upload to Canvas
-                through the Claude API for the purpose of generating accessible
+                through the AI provider for the purpose of generating accessible
                 formats.</span>
         </label>
         <label>

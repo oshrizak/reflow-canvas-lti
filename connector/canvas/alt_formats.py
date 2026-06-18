@@ -210,7 +210,7 @@ async def render_translation(
     """Translate the accessible HTML into ``target_lang`` via the project AI.
 
     Returns a new RenderedPage with translated body. Requires the
-    pipeline's AI provider to be configured (Anthropic API key or
+    pipeline's AI provider to be configured (AI provider API key, or
     AWS Bedrock credentials).
     """
     try:

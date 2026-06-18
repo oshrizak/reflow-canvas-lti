@@ -184,11 +184,11 @@ class Settings(BaseSettings):
         ge=15, le=3600, default=60, description="Canvas file poll interval (seconds)."
     )
 
-    # Per-course Claude-API spend cap. Default of 0 disables the cap;
+    # Per-course AI-API spend cap. Default of 0 disables the cap;
     # operators opt in by setting a per-course budget.
     canvas_monthly_spend_cap_usd_default: int = Field(
         ge=0, le=100_000, default=0,
-        description="Default monthly Claude-API spend cap in USD per Canvas course (0=unlimited).",
+        description="Default monthly AI-API spend cap in USD per Canvas course (0=unlimited).",
     )
     canvas_monthly_spend_cap_overrides: str = Field(
         default="",
