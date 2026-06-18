@@ -330,6 +330,14 @@ async def tool_config(request: Request) -> JSONResponse:
             ),
             "oidc_initiation_url": f"{base}/lti/login",
             "target_link_uri": f"{base}/canvas/review",
+            # Canvas's LTI key generator pre-populates Redirect URIs from
+            # ``target_link_uri`` only. The OIDC handshake redirects to
+            # ``/lti/launch`` though, so without this explicit list Canvas
+            # rejects the post-login redirect with "Invalid redirect_uri".
+            "redirect_uris": [
+                f"{base}/lti/launch",
+                f"{base}/canvas/review",
+            ],
             "scopes": [
                 # ONLY IMS-standard LTI Advantage scopes belong on the LTI
                 # Developer Key. Canvas Cloud rejects ``url:GET|/api/v1/...``
