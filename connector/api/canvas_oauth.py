@@ -31,12 +31,12 @@ from redis.asyncio import Redis
 from ..canvas.user_oauth import (
     OAuthState,
     UserOAuthError,
+    authorization_url,
     exchange_code,
     new_oauth_state_token,
-    put_user_token,
     put_oauth_state,
+    put_user_token,
     take_oauth_state,
-    authorization_url,
 )
 from ..config import settings
 from ..dependencies import get_redis_client

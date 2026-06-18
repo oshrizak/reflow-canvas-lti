@@ -20,7 +20,6 @@ from typing import Any
 from redis.asyncio import Redis
 
 from ..canvas.tenant import tk
-
 from .config import get_lti_settings
 
 logger = logging.getLogger(__name__)

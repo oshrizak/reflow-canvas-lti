@@ -18,7 +18,6 @@ import io
 import logging
 import re
 import uuid
-from typing import Any
 
 from .markdown_to_html import RenderedPage, render
 
@@ -216,6 +215,7 @@ async def render_translation(
     """
     try:
         from pydantic_ai import Agent
+
         from ..agents.model_factory import get_model_for_tier
         from ..agents.model_tiers import ModelTier
     except ImportError as exc:

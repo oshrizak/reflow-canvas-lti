@@ -45,7 +45,7 @@ import logging
 import secrets
 import time
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlencode
 
@@ -106,7 +106,7 @@ class UserToken:
             expires_at=time.time() + expires_in - _EXPIRY_BUFFER_SECONDS,
             canvas_user_id=uid,
             canvas_user_name=user_obj.get("name") or None,
-            obtained_at=datetime.now(timezone.utc).replace(microsecond=0).isoformat(),
+            obtained_at=datetime.now(UTC).replace(microsecond=0).isoformat(),
         )
 
     def is_expired(self) -> bool:

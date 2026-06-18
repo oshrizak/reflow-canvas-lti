@@ -35,7 +35,6 @@ from redis.asyncio import Redis
 from ..canvas.client import CanvasClient
 from ..canvas.errors import CanvasApiError
 from ..canvas.reflow_client import ReflowClient
-from ..canvas.tenant import tk
 from ..canvas.spend_cap import reserve_submission
 from ..canvas.state import (
     CanvasJob,
@@ -43,15 +42,15 @@ from ..canvas.state import (
     mark_processed,
     put_job,
 )
+from ..canvas.tenant import tk
+from ..canvas.user_oauth import get_user_token
 from ..config import settings
 from ..lti.platform import PlatformInstall
 from ..lti.platform_store import (
     get_course_owner,
     get_courses_for_platform,
-    get_platform,
     list_platforms,
 )
-from ..canvas.user_oauth import get_user_token
 
 # Default scope set the watcher's CanvasClient asks for in multi-tenant
 # mode. Matches the readable-discovery subset declared in
@@ -304,7 +303,7 @@ async def start_canvas_watcher(
 
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
 
 

@@ -20,10 +20,9 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlparse
-
 
 # Canonical Canvas URL conventions. Every Instructure-hosted and
 # self-hosted Canvas exposes these paths under its main hostname, so we
@@ -120,7 +119,7 @@ class PlatformInstall:
 
 def compute_platform_id(issuer: str, client_id: str, deployment_id: str) -> str:
     """Stable hash of the identity triple, 16 hex chars."""
-    blob = f"{issuer}|{client_id}|{deployment_id}".encode("utf-8")
+    blob = f"{issuer}|{client_id}|{deployment_id}".encode()
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
@@ -165,7 +164,7 @@ def derive_endpoints_from_issuer(issuer: str) -> PlatformEndpoints:
 
 def now_iso() -> str:
     """Timestamp string for the audit fields. UTC, no microseconds."""
-    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    return datetime.now(UTC).replace(microsecond=0).isoformat()
 
 
 def build_install_from_launch(

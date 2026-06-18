@@ -22,7 +22,6 @@ from ..canvas.client import CanvasClient
 from ..canvas.errors import CanvasApiError
 from ..canvas.markdown_to_html import render, render_link_stub
 from ..canvas.reflow_client import ReflowClient, rewrite_presigned_url
-from ..canvas.tenant import tk
 from ..canvas.state import (
     CanvasJob,
     get_file_page,
@@ -30,6 +29,7 @@ from ..canvas.state import (
     put_file_page,
     put_job,
 )
+from ..canvas.tenant import tk
 from ..config import settings
 from ..lti.platform_store import (
     get_course_owner,
@@ -175,7 +175,7 @@ async def start_reflow_bridge(
 
         try:
             await asyncio.wait_for(shutdown_event.wait(), timeout=interval)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             continue
 
 
@@ -243,7 +243,7 @@ async def _tick(redis: Redis, reflow: ReflowClient, canvas: CanvasClient) -> Non
                     _drive_job(redis, reflow, job_canvas, job),
                     timeout=_DRIVE_JOB_TIMEOUT_S,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "Bridge: job %s exceeded %ss; moving on (will retry next tick)",
                     job.reflow_job_id, _DRIVE_JOB_TIMEOUT_S,

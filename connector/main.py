@@ -86,7 +86,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         if pending:
             try:
                 await asyncio.wait_for(asyncio.gather(*pending, return_exceptions=True), timeout=10.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning("workers did not exit within 10s — cancelling forcefully")
                 for t in pending:
                     t.cancel()

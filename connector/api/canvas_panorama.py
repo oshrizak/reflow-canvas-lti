@@ -8,11 +8,9 @@ import time
 from dataclasses import asdict
 from typing import Any
 
-import httpx
-from pydantic import BaseModel
-
 from fastapi import APIRouter, Body, Cookie, Depends, Header, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse, PlainTextResponse, Response
+from pydantic import BaseModel
 from redis.asyncio import Redis
 
 from ..canvas.alt_formats import (
@@ -27,29 +25,27 @@ from ..canvas.alt_formats import (
     render_translation,
 )
 from ..canvas.client import CanvasClient
-from ..canvas.markdown_to_html import RenderedPage, _rewrite_image_paths
-from ..canvas.sanitize import sanitize_html
-from ..canvas.wcag_checks import run_wcag_checks
+from ..canvas.markdown_to_html import RenderedPage
 from ..canvas.panorama import (
     Issue,
     Score,
     issues_from_reflow_result,
-    score_from_reflow_result,
     source_accessibility_estimate,
 )
-from ..canvas.reflow_client import ReflowClient, rewrite_presigned_url
-from ..canvas.tenant import tk
+from ..canvas.reflow_client import ReflowClient
+from ..canvas.sanitize import sanitize_html
 from ..canvas.state import (
     append_approval_event,
     clear_edited_html,
     clear_processed,
-    get_approval_history,
     get_edited_html,
     get_job,
     list_approval_events,
     put_edited_html,
     put_job,
 )
+from ..canvas.tenant import tk
+from ..canvas.wcag_checks import run_wcag_checks
 from ..config import settings
 from ..dependencies import get_redis_client
 from ..lti.routes import SESSION_COOKIE
@@ -894,8 +890,9 @@ async def _require_instructor(
 # unset we fall back to *permissive* in dev only; production deploys
 # MUST set the env var or the gate will refuse cross-origin writes.
 
-import hmac as _hmac
-import hashlib as _hashlib
+import hashlib as _hashlib  # noqa: E402
+import hmac as _hmac  # noqa: E402
+
 
 def _csrf_secret() -> bytes:
     """Return the secret used to HMAC CSRF tokens.

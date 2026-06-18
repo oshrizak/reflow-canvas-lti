@@ -28,7 +28,6 @@ event handlers, javascript: URLs, dangerous embed/object/iframe.
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +134,7 @@ ALLOWED_CSS_PROPS: list[str] = [
 # ``<script>alert(1)</script>`` would leave the literal text
 # ``alert(1)`` in the output. We preprocess these elements out before
 # bleach.clean to avoid the noise.
-import re as _re
+import re as _re  # noqa: E402
 
 _STRIPPED_CONTENT_TAGS = ("script", "style", "iframe", "object", "embed", "noscript")
 _STRIP_RE = _re.compile(

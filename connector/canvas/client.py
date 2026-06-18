@@ -34,14 +34,14 @@ the refresh is surfaced to the caller as a permission problem.
 from __future__ import annotations
 
 import logging
-from typing import Any, Awaitable, Callable
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import httpx
 
 from ..config import settings
 from ..utils.retry_helpers import retry_with_backoff
 from .errors import CanvasApiError
-
 
 # Canvas occasionally returns 429 / 502 / 503 under load (especially during
 # bulk roster pulls or the start of a semester). Wrap network calls in
@@ -93,7 +93,7 @@ class CanvasClient:
         scopes: list[str],
         *,
         timeout: float = DEFAULT_TIMEOUT,
-    ) -> "CanvasClient":
+    ) -> CanvasClient:
         """Construct a client that authenticates via LTI service tokens.
 
         ``platform`` is a ``PlatformInstall`` from ``connector.lti.platform``.
@@ -130,7 +130,7 @@ class CanvasClient:
         user_id: str,
         *,
         timeout: float = DEFAULT_TIMEOUT,
-    ) -> "CanvasClient":
+    ) -> CanvasClient:
         """Construct a client that uses a faculty member's OAuth2 token.
 
         ``platform`` is a ``PlatformInstall``; ``user_id`` is the
