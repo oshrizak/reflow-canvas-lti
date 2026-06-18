@@ -45,6 +45,6 @@ Thumbs.db
 *.log
 logs/
 
-# Claude Code per-developer settings (project-shared settings.json is fine to commit)
+# Per-developer local tool settings
 .claude/settings.local.json
 
