@@ -1,0 +1,21 @@
+# Compose override that exposes the connector over a Cloudflared Quick Tunnel.
+# The tunnel URL is ephemeral (changes on every restart) and prints to the
+# cloudflared container's logs as ``https://<random>.trycloudflare.com``.
+#
+# Boot with:
+#   docker compose -f docker-compose.yml -f docker-compose.tunnel.yml up -d
+#
+# Grab the URL with:
+#   docker compose -f docker-compose.yml -f docker-compose.tunnel.yml logs cloudflared | grep trycloudflare.com
+#
+# Set the resulting URL as LTI_PUBLIC_URL in .env, then restart the connector
+# so the LTI config endpoint surfaces the right host.
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate --url http://connector:8000
+    depends_on:
+      connector:
+        condition: service_healthy
+    restart: unless-stopped

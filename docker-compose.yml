@@ -2,6 +2,20 @@ services:
   connector:
     build: .
     image: reflow-canvas-lti:dev
+    # ``--proxy-headers`` makes uvicorn trust X-Forwarded-Proto / -For from the
+    # fronting proxy (cloudflared / a real LB), so request.base_url comes back
+    # as https://... when traffic enters over HTTPS. Without this the LTI
+    # config endpoint hands Canvas http:// URLs and the launch is rejected.
+    command:
+      - uvicorn
+      - connector.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
     ports:
       - "8000:8000"
     env_file:
