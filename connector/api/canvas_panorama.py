@@ -1096,42 +1096,42 @@ async def pii_decision(
     _require_csrf(session_id, csrf_token)
     _require_trusted_origin(request)
 
-    # Defer the heavy imports so test discovery doesn't pull the full
-    # storage stack on bare-bones unit tests.
-    from ..dependencies import get_s3_url_service, get_storage_service
-    from ..services.approval_service import ApprovalService
-    from ..services.job_service import JobService
-    from ..services.queue_service import QueueService
+    # Forward the decision to upstream Reflow Core over HTTP. The connector
+    # used to call services.approval_service.ApprovalService directly when
+    # this code lived inside the monolith; in the connector split, that
+    # logic stays in core and we reach it via the documented PII endpoint.
+    # Reviewed-by carries the LTI user id, not an email, since the session
+    # doesn't guarantee email is present.
+    from ..canvas.reflow_client import ReflowApiError, ReflowClient
 
-    storage_service = await get_storage_service()
-    s3_url_service = await get_s3_url_service()
-    approval_service = ApprovalService(
-        redis_client=redis,
-        s3_client=None,  # lazy-loaded on denial path
-        job_service=JobService(redis),
-        queue_service=QueueService(redis),
-        storage_service=storage_service,
-        s3_url_service=s3_url_service,
-    )
-    # Reviewed-by carries the LTI user id, not an email, since the
-    # session doesn't guarantee email is present.
+    reflow = ReflowClient()
     reviewer = sess.user_email or sess.user_id
     try:
-        await approval_service.process_approval_decision(
+        await reflow.submit_pii_decision(
             job_id=job_id,
-            decision=decision,  # type: ignore[arg-type]
+            decision=decision,
             justification=justification,
             reviewed_by=reviewer,
         )
-    except ValueError as exc:
-        # Most common: job already moved past awaiting_approval
-        # (race with another instructor approving in a parallel tab).
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ReflowApiError as exc:
+        # 409: job already advanced past awaiting_approval (race with another
+        # instructor approving in a parallel tab). 404: running Reflow Core
+        # lacks the endpoint yet — operator action: ship the upstream PII PR.
+        if exc.status_code == 409:
+            raise HTTPException(status_code=409, detail=exc.message) from exc
+        logger.warning(
+            "Reflow Core rejected PII decision for job=%s: status=%s msg=%s",
+            job_id, exc.status_code, exc.message,
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Reflow Core PII decision error: {exc.message}",
+        ) from exc
     except Exception as exc:  # noqa: BLE001
         logger.exception("PII decision failed for job=%s", job_id)
         raise HTTPException(
             status_code=502,
-            detail=f"Reflow approval service error: {exc}",
+            detail=f"Reflow Core PII decision error: {exc}",
         ) from exc
 
     await append_approval_event(
