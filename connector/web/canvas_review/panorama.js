@@ -239,25 +239,45 @@
       .trim();
   }
 
+  // Spans that exist only for screen readers — they typically carry the
+  // filename text prefixed with "PDF File" or similar, so a naive scan
+  // matches them and anchors the dial to the checkbox column instead of
+  // the visible name cell. Detect both Instructure's Emotion class and
+  // common ``sr-only`` variants.
+  var _SR_ONLY_RE = /\b(screenReaderContent|sr-only|visually-?hidden)\b/;
+  function _isScreenReaderOnly(el) {
+    var cls = el.className;
+    if (typeof cls !== "string") return false;
+    return _SR_ONLY_RE.test(cls);
+  }
+
   function findFileRows() {
     var rows = document.querySelectorAll('[data-testid="table-row"]');
     var out = [];
     for (var i = 0; i < rows.length; i++) {
       var row = rows[i];
       if (row.dataset.reflowDecorated) continue;
-      var spans = row.querySelectorAll("span");
+      // Prefer the dedicated name cell when Canvas marks one — that's where
+      // the user-visible filename lives in the new Files UI. Falls back to
+      // scanning the whole row for legacy / non-table contexts.
+      var nameCell = row.querySelector('[data-testid="table-cell-name"]');
+      var scanRoots = nameCell ? [nameCell, row] : [row];
       var filename = "";
       var filenameSpan = null;
-      for (var j = 0; j < spans.length; j++) {
-        var t = cleanFilename(spans[j].textContent);
-        if (CONVERTIBLE_EXT_RE.test(t)) {
-          filename = t;
-          filenameSpan = spans[j];
-          break;
+      for (var r = 0; r < scanRoots.length && !filename; r++) {
+        var spans = scanRoots[r].querySelectorAll("span");
+        for (var j = 0; j < spans.length; j++) {
+          if (_isScreenReaderOnly(spans[j])) continue;
+          var t = cleanFilename(spans[j].textContent);
+          if (CONVERTIBLE_EXT_RE.test(t)) {
+            filename = t;
+            filenameSpan = spans[j];
+            break;
+          }
         }
       }
       if (!filename) continue;
-      out.push({ row: row, filename: filename, filenameSpan: filenameSpan });
+      out.push({ row: row, filename: filename, filenameSpan: filenameSpan, nameCell: nameCell });
     }
     return out;
   }
@@ -549,7 +569,7 @@
     btn.title = v.title;
     btn.setAttribute("aria-label", v.aria);
     btn.innerHTML =
-      '<svg viewBox="0 0 36 36" width="34" height="34" aria-hidden="true">' +
+      '<svg viewBox="0 0 36 36" width="32" height="32" aria-hidden="true">' +
       '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#e8eaed" stroke-width="3.2"/>' +
       '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="' + color + '" stroke-width="3.2"' +
       '          stroke-dasharray="' + score + ' ' + (100 - score) + '" stroke-dashoffset="25"' +
@@ -1103,8 +1123,14 @@
     s.textContent = [
       // Row dial
       ".reflow-pn-wrap{display:inline-flex;align-items:center;font-family:system-ui,-apple-system,Segoe UI,sans-serif;}",
-      ".reflow-pn-wrap.reflow-pn-row{position:absolute;top:50%;right:7.5rem;transform:translateY(-50%);margin:0;z-index:5;}",
-      ".reflow-pn-dial{background:transparent;border:0;padding:0;cursor:pointer;line-height:0;border-radius:50%;transition:transform 120ms,box-shadow 120ms;}",
+      ".reflow-pn-wrap.reflow-pn-row{position:absolute;top:50%;right:0.75rem;transform:translateY(-50%);margin:0;z-index:5;pointer-events:none;}",
+      ".reflow-pn-wrap.reflow-pn-row .reflow-pn-dial{pointer-events:auto;}",
+      // Legacy Files page: dial anchored to the filename cell, floated to the
+      // right edge of the cell so it sits in the cell's slack space without
+      // pushing the next column.
+      ".reflow-pn-wrap.reflow-pn-cell{position:absolute !important;top:50% !important;right:0.5rem !important;transform:translateY(-50%) !important;margin:0 !important;z-index:5 !important;pointer-events:none !important;display:inline-block !important;width:auto !important;}",
+      ".reflow-pn-wrap.reflow-pn-cell .reflow-pn-dial{pointer-events:auto;}",
+      ".reflow-pn-dial{background:transparent;border:0;padding:0;margin:0;cursor:pointer;line-height:0;border-radius:50%;transition:transform 120ms,box-shadow 120ms;vertical-align:middle;}",
       ".reflow-pn-dial:hover{transform:scale(1.08);box-shadow:0 0 0 4px rgba(0,0,0,0.05);}",
       ".reflow-pn-dial:focus{outline:none;box-shadow:0 0 0 3px rgba(10,95,181,0.4);}",
       // Modal
@@ -1871,6 +1897,28 @@
     var byId = await byIdPromise;
     var byJob = await byJobPromise;
 
+    // Walk up from ``node`` looking for an ancestor that can host an
+    // absolute-positioned child. <tr> is unreliable across browsers
+    // (most engines treat ``position:relative`` on it as static under the
+    // default ``border-collapse:collapse``), so we prefer real cell
+    // elements: <td>, <th>, ARIA ``role="cell"`` divs, and Canvas's own
+    // ``[data-testid*="cell"]`` divs. Stops at ``stopAt`` (typically the
+    // row element) so we never escape upwards into the whole table.
+    function findPositioningCell(node, stopAt) {
+      var cur = node;
+      while (cur && cur !== document.body) {
+        if (stopAt && cur === stopAt) break;
+        var tag = cur.tagName;
+        if (tag === "TD" || tag === "TH") return cur;
+        var role = cur.getAttribute && cur.getAttribute("role");
+        if (role === "cell" || role === "gridcell") return cur;
+        var testid = cur.dataset && cur.dataset.testid;
+        if (testid && /cell/i.test(testid)) return cur;
+        cur = cur.parentElement;
+      }
+      return stopAt || null;
+    }
+
     function attachAfter(target, payload, filename, opts) {
       if (!opts && !shouldDecorate(payload)) return;
       var btn = makeDial(payload, filename, opts);
@@ -1883,12 +1931,19 @@
       var payload = byName[entry.filename];
       if (!payload) return;
       entry.row.dataset.reflowDecorated = "1";
-      // Anchor the dial next to the FILENAME span (not the first span in
-      // the row, which is usually a screen-reader-only label that lives
-      // way before the visible columns). Falls back to the row itself
-      // only when findFileRows didn't capture a filenameSpan.
-      var anchor = entry.filenameSpan || entry.row;
-      attachAfter(anchor, payload, entry.filename);
+      if (!shouldDecorate(payload)) return;
+      var cell = findPositioningCell(entry.filenameSpan || entry.row, entry.row);
+      if (!cell) return;
+      var btn = makeDial(payload, entry.filename);
+      var wrap = document.createElement("span");
+      wrap.className = "reflow-pn-wrap reflow-pn-cell";
+      wrap.appendChild(btn);
+      try {
+        if (getComputedStyle(cell).position === "static") {
+          cell.style.position = "relative";
+        }
+      } catch (e) { /* defensive */ }
+      cell.appendChild(wrap);
     });
 
     moduleItems.forEach(function (entry) {
@@ -1904,6 +1959,22 @@
       if (!shouldDecorate(payload)) return;
       entry.anchor.dataset.reflowDecorated = "1";
       var filename = cleanFilename(entry.anchor.textContent || "Document");
+      var cell = findPositioningCell(entry.anchor);
+      if (cell) {
+        var btn = makeDial(payload, filename);
+        var wrap = document.createElement("span");
+        wrap.className = "reflow-pn-wrap reflow-pn-cell";
+        wrap.appendChild(btn);
+        try {
+          if (getComputedStyle(cell).position === "static") {
+            cell.style.position = "relative";
+          }
+        } catch (e) { /* defensive */ }
+        cell.appendChild(wrap);
+        return;
+      }
+      // Pages / Discussions / arbitrary anchor contexts: no table column to
+      // anchor against, fall back to inline-after.
       attachAfter(entry.anchor, payload, filename);
     });
 

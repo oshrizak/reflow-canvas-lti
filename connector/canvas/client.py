@@ -372,17 +372,15 @@ class CanvasClient:
             if not download_url:
                 raise CanvasApiError(404, f"File {file_id} has no download URL")
 
-            # The download URL is a presigned S3 link; it doesn't need our
-            # bearer (Canvas signs the URL with its own credentials). But
-            # we still pass headers to follow Canvas's own conventions in
-            # case the API ever changes; the S3 bucket just ignores them.
-            async def _bytes(headers: dict[str, str]) -> httpx.Response:
-                async with httpx.AsyncClient(timeout=self._timeout) as client:
-                    return await client.get(
-                        download_url, headers=headers, follow_redirects=True
-                    )
-
-            file_resp = await self._request_with_401_retry(_bytes, "download file")
+            # The download URL Canvas returns is either a presigned S3 link
+            # (older Canvas) or an instructure.com URL with a ``verifier``
+            # query param (Canvas Cloud, current). In the verifier case,
+            # sending our OAuth Bearer alongside the verifier causes a 401
+            # — Canvas refuses requests that mix auth schemes. The verifier
+            # in the URL is the auth, so call the URL with no auth headers
+            # at all and follow any redirects to S3.
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                file_resp = await client.get(download_url, follow_redirects=True)
             self._raise_for_status(file_resp, "download file")
             return file_resp.content
 

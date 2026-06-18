@@ -27,6 +27,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Response
+from fastapi.middleware.cors import CORSMiddleware
 
 from connector.api import canvas_consent, canvas_oauth, canvas_panorama, canvas_review
 from connector.config import settings
@@ -102,6 +103,29 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Canvas embeds the panorama bundle inside an iframe served from the
+# institutional Canvas origin (e.g. csueb.instructure.com) and makes
+# cross-origin fetches from there to the connector. Without explicit
+# CORS allow-origin headers the browser blocks every fetch — see the
+# /canvas/panorama/csrf, /canvas/consent/status, etc. failures during
+# CSUEB testing on 2026-06-18. Operators configure the allowlist via
+# CANVAS_ALLOWED_ORIGINS (comma-separated) and optionally
+# CANVAS_ALLOWED_ORIGIN_REGEX for wildcard matches.
+_origins = [
+    o.strip()
+    for o in (settings.canvas_allowed_origins or "").split(",")
+    if o.strip()
+]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_origins,
+    allow_origin_regex=(settings.canvas_allowed_origin_regex or None),
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
+
 app.include_router(lti_router)
 app.include_router(canvas_consent.router)
 app.include_router(canvas_oauth.router)
@@ -130,5 +154,15 @@ async def panorama_js_root() -> Response:
     return Response(
         content=_PANORAMA_JS_PATH.read_bytes(),
         media_type="application/javascript",
-        headers={"Cache-Control": "no-cache"},
+        headers={
+            # Strong no-cache for browsers, edge proxies, and CDNs.
+            # Cloudflare in particular ignores a lone ``no-cache`` directive
+            # and applies its own ``max-age=14400`` to JS responses by
+            # default; explicit ``no-store`` plus the CF-specific override
+            # below stop it from caching at the edge.
+            "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+            "CDN-Cache-Control": "no-store",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
     )
