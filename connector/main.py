@@ -1,12 +1,9 @@
 """Connector entrypoint.
 
 Boots a FastAPI app that exposes a ``/health`` probe, the LTI 1.3
-handshake endpoints, and (in later phases) the Canvas API + Panorama
-routers, plus the ``canvas_watcher`` and ``reflow_bridge_worker``
-background tasks.
-
-This Phase C version mounts the LTI router. Canvas API routers and
-background workers are wired in Phases D-F.
+handshake endpoints, and the Canvas API routers (consent, OAuth, panorama,
+review). Background workers (canvas_watcher + reflow_bridge_worker) are
+wired in Phase F.
 """
 
 from __future__ import annotations
@@ -17,6 +14,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from connector.api import canvas_consent, canvas_oauth, canvas_panorama, canvas_review
 from connector.config import settings
 from connector.lti import router as lti_router
 
@@ -50,6 +48,10 @@ app = FastAPI(
 )
 
 app.include_router(lti_router)
+app.include_router(canvas_consent.router)
+app.include_router(canvas_oauth.router)
+app.include_router(canvas_panorama.router)
+app.include_router(canvas_review.router)
 
 
 @app.get("/health")
