@@ -14,11 +14,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-COPY pyproject.toml ./
+# Copy package source first — hatch builds the wheel from connector/ so the
+# directory has to exist before ``pip install .`` runs.
+COPY pyproject.toml README.md ./
+COPY connector/ ./connector/
+
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir .
-
-COPY connector/ ./connector/
 
 EXPOSE 8000
 
