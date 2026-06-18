@@ -24,8 +24,9 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 
 from connector.api import canvas_consent, canvas_oauth, canvas_panorama, canvas_review
 from connector.config import settings
@@ -35,6 +36,8 @@ from connector.workers.canvas_watcher import start_canvas_watcher
 from connector.workers.reflow_bridge_worker import start_reflow_bridge
 
 logger = logging.getLogger("connector")
+
+_PANORAMA_JS_PATH = Path(__file__).resolve().parent / "web" / "canvas_review" / "panorama.js"
 
 
 @asynccontextmanager
@@ -110,3 +113,22 @@ app.include_router(canvas_review.router)
 async def health() -> dict[str, str]:
     """Liveness probe used by Docker and orchestrators."""
     return {"status": "ok"}
+
+
+@app.get("/panorama.js", include_in_schema=False)
+async def panorama_js_root() -> Response:
+    """Serve the Theme-Editor JS bundle from the site root.
+
+    Canvas's Theme Editor injects ``<script src="/panorama.js">`` on every
+    page; the script lives under the connector's own origin (via
+    ``LTI_PUBLIC_URL``) and decides per-page whether to render the
+    accessibility overlay. Mirrored at ``/lti/panorama.js`` for the
+    legacy loader.
+    """
+    if not _PANORAMA_JS_PATH.exists():
+        return Response(status_code=404, content="// panorama.js bundle not found")
+    return Response(
+        content=_PANORAMA_JS_PATH.read_bytes(),
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache"},
+    )

@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Accessible Documents — Review</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 64rem; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  p.lede { color: #555; margin-top: 0; }
+  table { width: 100%; border-collapse: collapse; margin-top: 1.5rem; }
+  th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #ddd; }
+  th { font-weight: 600; }
+  a.button { display: inline-block; padding: 0.4rem 0.8rem; border: 1px solid #888; border-radius: 4px; text-decoration: none; color: inherit; }
+  .empty { padding: 2rem 0; color: #666; font-style: italic; }
+</style>
+</head>
+<body>
+  <h1>Accessible Documents — Review queue</h1>
+  <p class="lede">Hello, {{ user_name }}. Each row is a PDF that has been converted into a draft Canvas Page. Open one to review it before students see it.</p>
+
+  <div id="status" aria-live="polite"></div>
+  <table id="queue" hidden>
+    <thead>
+      <tr><th>Filename</th><th>Submitted</th><th>Action</th></tr>
+    </thead>
+    <tbody></tbody>
+  </table>
+
+  <p id="empty" class="empty" hidden>Nothing waiting for review. New PDFs you upload will appear here within a few minutes.</p>
+
+<script>
+  const courseId = "{{ course_id }}";
+  const tbody = document.querySelector("#queue tbody");
+  const table = document.getElementById("queue");
+  const empty = document.getElementById("empty");
+  const statusEl = document.getElementById("status");
+
+  async function load() {
+    statusEl.textContent = "Loading…";
+    try {
+      const resp = await fetch(`/canvas/review/api/pending?course_id=${encodeURIComponent(courseId)}`);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      statusEl.textContent = "";
+      tbody.innerHTML = "";
+      if (!data.jobs.length) {
+        table.hidden = true; empty.hidden = false; return;
+      }
+      table.hidden = false; empty.hidden = true;
+      for (const job of data.jobs) {
+        const tr = document.createElement("tr");
+        const submitted = new Date(job.created_at * 1000).toLocaleString();
+        tr.innerHTML = `
+          <td>${escapeHtml(job.filename)}</td>
+          <td>${submitted}</td>
+          <td><a class="button" href="/canvas/review/${encodeURIComponent(job.reflow_job_id)}">Review</a></td>
+        `;
+        tbody.appendChild(tr);
+      }
+    } catch (err) {
+      statusEl.textContent = `Could not load queue: ${err.message}`;
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+  }
+
+  load();
+</script>
+</body>
+</html>

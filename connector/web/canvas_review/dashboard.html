@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Course accessibility dashboard</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font-family: system-ui, sans-serif; margin: 2rem auto; max-width: 72rem; padding: 0 1rem; }
+  h1 { font-size: 1.4rem; margin-bottom: 0.5rem; }
+  .summary { display: flex; gap: 2rem; align-items: center; margin: 1rem 0 2rem; }
+  .ring { width: 8rem; height: 8rem; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #ddd; text-align: left; }
+  .pill { display: inline-block; padding: 0.1rem 0.5rem; border-radius: 999px; color: #fff; font-size: 0.8rem; }
+  .sev-red { background: #b00020; }
+  .sev-amber { background: #b06b00; }
+  .sev-green { background: #2e7d32; }
+  .sev-dark-green { background: #155724; }
+</style>
+</head>
+<body>
+  <h1>Course accessibility</h1>
+  <p>Course: <code>{{ course_id }}</code></p>
+
+  <div class="summary">
+    <svg class="ring" viewBox="0 0 36 36" aria-label="Course average accessibility score">
+      <circle cx="18" cy="18" r="15.9" fill="none" stroke="#eee" stroke-width="3"/>
+      <circle id="ring" cx="18" cy="18" r="15.9" fill="none" stroke="#2e7d32" stroke-width="3"
+              stroke-dasharray="0 100" transform="rotate(-90 18 18)"/>
+      <text id="ring-label" x="18" y="20.5" text-anchor="middle" font-size="6" fill="currentColor">—</text>
+    </svg>
+    <div>
+      <div><strong>Files scanned:</strong> <span id="count">—</span></div>
+      <div><strong>Needs attention:</strong> <span id="red-count">—</span></div>
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr><th>Filename</th><th>Status</th><th>Score</th><th>Action</th></tr>
+    </thead>
+    <tbody id="rows"></tbody>
+  </table>
+
+<script>
+  const courseId = "{{ course_id }}";
+
+  async function load() {
+    const r = await fetch(`/canvas/review/api/pending?course_id=${encodeURIComponent(courseId)}`);
+    const data = r.ok ? await r.json() : { jobs: [] };
+    const ids = data.jobs.map(j => j.canvas_file_id).filter(Boolean);
+    let scores = {};
+    if (ids.length) {
+      const sr = await fetch(`/canvas/panorama/score?course_id=${encodeURIComponent(courseId)}&file_ids=${ids.join(",")}`);
+      if (sr.ok) scores = (await sr.json()).scores || {};
+    }
+
+    let total = 0, scored = 0, red = 0;
+    const tbody = document.getElementById("rows");
+    tbody.innerHTML = "";
+    for (const j of data.jobs) {
+      const s = scores[j.canvas_file_id] || { status: "unscanned" };
+      const score = s.status === "scored" ? s.score : null;
+      const sev = s.status === "scored" ? s.severity : "amber";
+      if (score !== null) { total += score; scored++; if (sev === "red") red++; }
+      const tr = document.createElement("tr");
+      tr.innerHTML = `
+        <td>${escape(j.filename)}</td>
+        <td>${escape(j.status || "—")}</td>
+        <td>${score === null ? "—" : `<span class="pill sev-${sev}">${score}%</span>`}</td>
+        <td><a href="/canvas/review/${encodeURIComponent(j.reflow_job_id)}">Review</a></td>`;
+      tbody.appendChild(tr);
+    }
+
+    const avg = scored ? Math.round(total / scored) : 0;
+    document.getElementById("count").textContent = scored;
+    document.getElementById("red-count").textContent = red;
+    document.getElementById("ring").setAttribute("stroke-dasharray", `${avg} ${100 - avg}`);
+    document.getElementById("ring-label").textContent = scored ? `${avg}%` : "—";
+  }
+  function escape(s) {
+    return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));
+  }
+  load();
+</script>
+</body>
+</html>
