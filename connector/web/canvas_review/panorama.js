@@ -468,14 +468,12 @@
                title: "Converting… check back shortly",
                aria: "Converting. Check back shortly." };
     }
-    if (js === "page_failed") {
-      // Conversion succeeded but Canvas rejected the page write (usually a
-      // missing Pages permission on the connected account). Actionable, not
-      // a conversion failure — the page rebuilds itself once access is fixed.
-      return { score: 0, label: "!", color: COLORS.amber, severity: "amber",
-               title: "Converted, but the accessible page couldn't be created — click for details",
-               aria: "Conversion succeeded but the Canvas page could not be created. Click for details." };
-    }
+    // page_failed: conversion succeeded but Canvas rejected the page write
+    // (usually a missing Pages permission on the connected account). The
+    // accessibility result IS available — we fall through to the score
+    // display below so the dial reflects the real "before/after" numbers,
+    // and the completed-path logic augments the tooltip with the
+    // page-failure note so the action is still discoverable.
     if (js === "failed" || js === "denied" || js === "rejected") {
       return { score: 0, label: "!", color: COLORS.red, severity: "red",
                title: "Conversion needs attention — click for details",
@@ -494,6 +492,11 @@
                  aria: "Accessible version available. Open Alternative Formats Menu." };
       }
     }
+    // page_failed addendum used by both score branches below — actionable
+    // note about the Canvas Page write without burying the actual score.
+    var pageFailedNote = (js === "page_failed")
+      ? " (Canvas Page not created — click for details)"
+      : "";
     // Instructors: show the original PDF's source estimate (the "before").
     if (hasSource) {
       var ss = payload.source_score;
@@ -503,9 +506,10 @@
         : "";
       return { score: ss, label: ss + "%", color: COLORS[ssev] || COLORS.red,
                severity: ssev,
-               title: "Original PDF ~" + ss + "% accessible" + after + " — open Alternative Formats Menu",
+               title: "Original PDF ~" + ss + "% accessible" + after + pageFailedNote + " — open Alternative Formats Menu",
                aria: "Original PDF is about " + ss + " percent accessible"
                      + (hasOutput ? ("; an accessible version scoring " + payload.score + " percent is available") : "")
+                     + (js === "page_failed" ? "; Canvas Page could not be created" : "")
                      + ". Open Alternative Formats Menu." };
     }
     // No source estimate (older job without signals): fall back to the
@@ -514,8 +518,11 @@
       var sc = payload.score;
       var sev = payload.severity || severityFor(sc);
       return { score: sc, label: sc + "%", color: COLORS[sev] || COLORS.red,
-               severity: sev, title: "Accessibility " + sc + "% — open Alternative Formats Menu",
-               aria: "Accessibility " + sc + "%. Open Alternative Formats Menu." };
+               severity: sev,
+               title: "Accessibility " + sc + "%" + pageFailedNote + " — open Alternative Formats Menu",
+               aria: "Accessibility " + sc + "%"
+                     + (js === "page_failed" ? "; Canvas Page could not be created" : "")
+                     + ". Open Alternative Formats Menu." };
     }
     if (js === "published") {
       return { score: 0, label: "✓", color: COLORS.green, severity: "green",
