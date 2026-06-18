@@ -1949,12 +1949,34 @@
       if (!payload) return;
       entry.row.dataset.reflowDecorated = "1";
       if (!shouldDecorate(payload)) return;
-      var cell = findPositioningCell(entry.filenameSpan || entry.row, entry.row);
-      if (!cell) return;
       var btn = makeDial(payload, entry.filename);
       var wrap = document.createElement("span");
-      wrap.className = "reflow-pn-wrap reflow-pn-cell";
       wrap.appendChild(btn);
+      // Prefer the dedicated actions column so the dial gets its own real
+      // estate next to the row's 3-dot menu — keeps it away from the
+      // UDOIT "Manage Alternates" dropdown that lives in the name cell.
+      // Falls back to the name-cell positioning for surfaces without an
+      // actions column (legacy Files page, anchor-only contexts).
+      var actionsCell = entry.row.querySelector('[data-testid="table-cell-actions"]');
+      if (actionsCell) {
+        wrap.className = "reflow-pn-wrap reflow-pn-actions";
+        try {
+          // Make the actions cell layout side-by-side so the dial sits
+          // immediately before the row's existing menu button instead of
+          // overlaying it.
+          var cs = getComputedStyle(actionsCell);
+          if (cs.display.indexOf("flex") < 0) {
+            actionsCell.style.display = "flex";
+            actionsCell.style.alignItems = "center";
+            actionsCell.style.gap = "0.5rem";
+          }
+        } catch (e) { /* defensive */ }
+        actionsCell.insertBefore(wrap, actionsCell.firstChild);
+        return;
+      }
+      var cell = findPositioningCell(entry.filenameSpan || entry.row, entry.row);
+      if (!cell) return;
+      wrap.className = "reflow-pn-wrap reflow-pn-cell";
       try {
         if (getComputedStyle(cell).position === "static") {
           cell.style.position = "relative";
