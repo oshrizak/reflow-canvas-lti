@@ -69,28 +69,13 @@ _USER_SCOPES = [
     "url:GET|/api/v1/courses/:course_id/assignments",
     "url:GET|/api/v1/courses/:course_id/quizzes",
     "url:GET|/api/v1/files/:id",
+    "url:GET|/api/v1/folders/:id/files",
     "url:POST|/api/v1/courses/:course_id/pages",
+    "url:PUT|/api/v1/courses/:course_id/pages/:url_or_id",
     "url:POST|/api/v1/conversations",
-    # NOTE: three scopes are not requested here because the Canvas Cloud
-    # scope picker on some instances doesn't expose them under these exact
-    # strings — Canvas rejects the whole OAuth authorize with "invalid_scope"
-    # if any one scope is unrecognized. Operators that need full
-    # functionality must enable these on their API Developer Key and then
-    # re-add them here:
-    #
-    #   url:GET|/api/v1/folders/:id/files
-    #       — folder listing. Lost capability: nested-folder file discovery.
-    #         Watcher still finds top-level course files.
-    #
-    #   url:PUT|/api/v1/courses/:course_id/pages/:url_or_id
-    #       — update existing page. Lost capability: re-runs of a job create
-    #         a new page each time instead of overwriting the previous one
-    #         (faculty must delete duplicates).
-    #
-    #   url:POST|/api/v1/courses/:course_id/files
-    #       — upload course file. Lost capability: figures aren't uploaded
-    #         to a Canvas course folder; generated pages reference figures
-    #         via the connector's tunneled origin instead.
+    # Upload converted figures into a course folder so generated pages embed
+    # Canvas-hosted images (self-contained; no figure proxy).
+    "url:POST|/api/v1/courses/:course_id/files",
 ]
 
 
