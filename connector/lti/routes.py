@@ -331,32 +331,16 @@ async def tool_config(request: Request) -> JSONResponse:
             "oidc_initiation_url": f"{base}/lti/login",
             "target_link_uri": f"{base}/canvas/review",
             "scopes": [
-                # Service-account scopes the watcher + bridge need. Each
-                # one is admin-approved when the Developer Key is created
-                # and is part of every client-credentials token request.
-                # Order is alphabetical inside each group for stability.
+                # ONLY IMS-standard LTI Advantage scopes belong on the LTI
+                # Developer Key. Canvas Cloud rejects ``url:GET|/api/v1/...``
+                # / ``url:POST|/api/v1/...`` shapes in this config — those
+                # are Canvas data-API scopes and they live on the separate
+                # *API* Developer Key (which faculty consent to via the
+                # per-instructor OAuth2 flow at /canvas/oauth/authorize).
                 #
-                # Canvas data API:
-                "url:GET|/api/v1/courses/:course_id/files",
-                "url:GET|/api/v1/courses/:course_id/folders",
-                "url:GET|/api/v1/courses/:course_id/modules",
-                "url:GET|/api/v1/courses/:course_id/modules/:module_id/items",
-                "url:GET|/api/v1/courses/:course_id/pages",
-                "url:GET|/api/v1/courses/:course_id/pages/:url_or_id",
-                "url:GET|/api/v1/courses/:course_id/discussion_topics",
-                "url:GET|/api/v1/courses/:course_id/discussion_topics/:topic_id/entries",
-                "url:GET|/api/v1/courses/:course_id/assignments",
-                "url:GET|/api/v1/courses/:course_id/quizzes",
-                "url:GET|/api/v1/files/:id",
-                "url:GET|/api/v1/folders/:id/files",
-                "url:POST|/api/v1/courses/:course_id/pages",
-                "url:PUT|/api/v1/courses/:course_id/pages/:url_or_id",
-                "url:POST|/api/v1/conversations",
-                #
-                # LTI Advantage standard scopes (NRPS + AGS pre-warming
-                # for Batch 6). Granted same Developer Key checkbox.
-                "https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly",
+                # Order is alphabetical for stability.
                 "https://purl.imsglobal.org/spec/lti-ags/scope/lineitem.readonly",
+                "https://purl.imsglobal.org/spec/lti-nrps/scope/contextmembership.readonly",
             ],
             "extensions": [
                 {
