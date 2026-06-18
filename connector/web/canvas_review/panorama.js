@@ -267,6 +267,16 @@
       for (var r = 0; r < scanRoots.length && !filename; r++) {
         var spans = scanRoots[r].querySelectorAll("span");
         for (var j = 0; j < spans.length; j++) {
+          // Skip non-leaf spans: Canvas wraps the file-icon SVG and the
+          // filename text inside the SAME outer flex container, and the
+          // SVG carries an aria-labelling ``<title>PDF File</title>``
+          // element. Calling .textContent on the outer span concatenates
+          // the title text and the filename text — producing strings like
+          // ``"PDF File01 SPRITE Chimera Student Module.pdf"`` that match
+          // the extension regex but don't match any scored_files key.
+          // Only the innermost text-bearing span (no element children)
+          // carries the bare filename we need.
+          if (spans[j].children.length > 0) continue;
           if (_isScreenReaderOnly(spans[j])) continue;
           var t = cleanFilename(spans[j].textContent);
           if (CONVERTIBLE_EXT_RE.test(t)) {
