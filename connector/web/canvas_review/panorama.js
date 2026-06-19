@@ -1346,6 +1346,25 @@
       ".reflow-pn-fmt-card-icon{flex:0 0 auto;width:1.9rem;height:1.9rem;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:0.95rem;line-height:1;}",
       ".reflow-pn-fmt-card-label{flex:1;font-size:0.88rem;font-weight:500;line-height:1.25;}",
       ".reflow-pn-fmt-card-soon{font-size:0.62rem;font-weight:700;text-transform:uppercase;color:#999;background:#f0f0f0;padding:0.12rem 0.4rem;border-radius:999px;}",
+      // WCAG publication gate panel (only shown when the backend returns
+      // a 409 with structured findings). Inline inside the approval bar
+      // so faculty stays in flow.
+      ".reflow-pn-wcag-gate{width:100%;padding:0.85rem 0 0;margin-top:0.6rem;border-top:1px solid #e7e9ec;display:flex;flex-direction:column;gap:0.6rem;}",
+      ".reflow-pn-wcag-gate-title{margin:0;font-size:0.95rem;font-weight:700;color:#1d1d1d;}",
+      ".reflow-pn-wcag-gate-subtitle{margin:0.25rem 0 0;font-size:0.85rem;font-weight:700;color:#1d1d1d;}",
+      ".reflow-pn-wcag-gate-hint{margin:0;color:#5b6573;font-size:0.82rem;line-height:1.45;}",
+      ".reflow-pn-wcag-checklist,.reflow-pn-wcag-findings{list-style:none;padding:0;margin:0;display:flex;flex-direction:column;gap:0.35rem;}",
+      ".reflow-pn-wcag-checklist label,.reflow-pn-wcag-finding label{display:flex;align-items:flex-start;gap:0.55rem;padding:0.45rem 0.6rem;border:1px solid #e7e9ec;border-radius:6px;background:#fafbfc;cursor:pointer;font-size:0.86rem;line-height:1.35;}",
+      ".reflow-pn-wcag-checklist label:hover,.reflow-pn-wcag-finding label:hover{border-color:#bfc4cb;background:#fff;}",
+      ".reflow-pn-wcag-checklist input,.reflow-pn-wcag-finding input{margin-top:0.15rem;flex-shrink:0;}",
+      ".reflow-pn-wcag-rule{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:0.78rem;font-weight:700;color:#b91c1c;background:#fee2e2;padding:0.05rem 0.4rem;border-radius:4px;flex-shrink:0;}",
+      ".reflow-pn-wcag-msg{color:#1d1d1d;flex:1;}",
+      ".reflow-pn-wcag-gate-actions{display:flex;gap:0.5rem;margin-top:0.3rem;}",
+      ".reflow-pn-wcag-confirm,.reflow-pn-wcag-cancel{padding:0.5rem 0.95rem;border-radius:6px;border:1px solid transparent;cursor:pointer;font-weight:600;font-size:0.86rem;}",
+      ".reflow-pn-wcag-confirm{background:#15803d;color:#fff;}",
+      ".reflow-pn-wcag-confirm:hover{background:#166534;}",
+      ".reflow-pn-wcag-cancel{background:#fff;border-color:#cdd3da;color:#1d1d1d;}",
+      ".reflow-pn-wcag-cancel:hover{background:#f3f4f6;}",
       ".reflow-pn-modal-footer{display:flex;align-items:center;justify-content:space-between;padding:0.7rem 1.5rem;border-top:1px solid #ececec;background:#fafafa;font-size:0.83rem;color:#444;}",
       ".reflow-pn-switch{position:relative;display:inline-block;width:2.4rem;height:1.35rem;}",
       ".reflow-pn-switch input{opacity:0;width:0;height:0;}",
@@ -1852,6 +1871,133 @@
     });
   }
 
+  // Replace the approval bar contents with the success state for the
+  // given action. Pulled out so the multi-pass WCAG-gate flow can call
+  // it after the resubmit succeeds.
+  function _showApprovalSuccess(bar, action) {
+    var pubBadge, pubColor, pubMsg;
+    if (action === "approve") {
+      pubBadge = "APPROVED"; pubColor = "#2e7d32";
+      pubMsg = "Published — this accessible version is now visible to students.";
+    } else if (action === "reject") {
+      pubBadge = "REJECTED"; pubColor = "#b00020";
+      pubMsg = "Rejected — this version is hidden from students.";
+    } else if (action === "unpublish") {
+      pubBadge = "DRAFT"; pubColor = "#cc7a00";
+      pubMsg = "Unpublished — hidden from students and removed from the Pages list. Re-publish anytime with Approve & publish.";
+    } else {
+      pubBadge = "DRAFT"; pubColor = "#cc7a00";
+      pubMsg = "Pulled back to draft for more edits.";
+    }
+    var pubActions = bar.querySelector(".reflow-pn-approval-actions");
+    if (pubActions) pubActions.remove();
+    var pubGate = bar.querySelector(".reflow-pn-wcag-gate");
+    if (pubGate) pubGate.remove();
+    var pubLeft = bar.querySelector(".reflow-pn-approval-left");
+    if (pubLeft) {
+      pubLeft.innerHTML =
+        '<span class="reflow-pn-status-badge" style="background:' + pubColor + '">' + pubBadge + '</span>' +
+        '<span class="reflow-pn-approval-msg">' + esc(pubMsg) + '</span>';
+    }
+  }
+
+  // Render the WCAG gate panel: a checklist of 4 manual review items
+  // (always shown) + a list of automated WCAG error findings (each
+  // waivable individually with a justification). Replaces the row of
+  // approve/reject buttons with the panel. Calls ``onConfirm`` once
+  // faculty has signed off and clicked Confirm and publish; the caller
+  // resubmits the POST with ``gateState.waivers`` / ``gateState.checklist``
+  // populated. The same gateState reference is mutated in place so a
+  // multi-pass gate (e.g. unwaived findings AFTER unchecked items)
+  // preserves the work the user already did.
+  function _renderWcagGatePanel(bar, detail, gateState, onConfirm) {
+    var actions = bar.querySelector(".reflow-pn-approval-actions");
+    var existing = bar.querySelector(".reflow-pn-wcag-gate");
+    if (existing) existing.remove();
+    if (actions) actions.style.display = "none";
+
+    var findings = (detail && detail.findings) || [];
+    var checklistItems = [
+      { id: "headings",      label: "Headings are correct (H1 down, no skipped levels)" },
+      { id: "alt_text",      label: "Every figure has meaningful alt text" },
+      { id: "tables",        label: "Tables have row + column headers where needed" },
+      { id: "reading_order", label: "Reading order matches the visual order" }
+    ];
+
+    var html = '<div class="reflow-pn-wcag-gate" role="region" aria-label="Publication gate">' +
+      '<h3 class="reflow-pn-wcag-gate-title">Before you publish — quick review</h3>' +
+      '<p class="reflow-pn-wcag-gate-hint">Confirm you have visually reviewed these items. Anything an automated check found that you cannot fix in the editor can be waived with a reason.</p>' +
+      '<ul class="reflow-pn-wcag-checklist">';
+    checklistItems.forEach(function (item) {
+      var checked = !!gateState.checklist[item.id];
+      html += '<li><label><input type="checkbox" data-checklist="' + item.id + '"' +
+              (checked ? " checked" : "") +
+              '> ' + esc(item.label) + '</label></li>';
+    });
+    html += '</ul>';
+
+    if (findings.length) {
+      html += '<h4 class="reflow-pn-wcag-gate-subtitle">Automated WCAG checks found ' + findings.length + ' issue' + (findings.length === 1 ? "" : "s") + '</h4>' +
+              '<p class="reflow-pn-wcag-gate-hint">Fix in the editor before publishing, OR check the box to waive (and tell us why — recorded for the audit trail).</p>' +
+              '<ul class="reflow-pn-wcag-findings">';
+      findings.forEach(function (f) {
+        var alreadyWaived = gateState.waivers.indexOf(f.rule_id) >= 0;
+        html += '<li class="reflow-pn-wcag-finding" data-rule="' + esc(f.rule_id) + '">' +
+                '  <label>' +
+                '    <input type="checkbox" data-waive="' + esc(f.rule_id) + '"' +
+                       (alreadyWaived ? " checked" : "") + '>' +
+                '    <span class="reflow-pn-wcag-rule">' + esc(f.rule_id) + '</span>' +
+                '    <span class="reflow-pn-wcag-msg">' + esc(f.message || "") + '</span>' +
+                '  </label>' +
+                '</li>';
+      });
+      html += '</ul>';
+    }
+
+    html += '<div class="reflow-pn-wcag-gate-actions">' +
+            '  <button class="reflow-pn-btn-primary reflow-pn-wcag-confirm" type="button">✓ Confirm and publish</button>' +
+            '  <button class="reflow-pn-btn-secondary reflow-pn-wcag-cancel" type="button">Cancel</button>' +
+            '</div>' +
+            '</div>';
+
+    bar.insertAdjacentHTML("beforeend", html);
+    var panel = bar.querySelector(".reflow-pn-wcag-gate");
+
+    // Wire the checkboxes -> mutate gateState in place.
+    panel.querySelectorAll('input[data-checklist]').forEach(function (cb) {
+      cb.addEventListener("change", function () {
+        gateState.checklist[cb.dataset.checklist] = !!cb.checked;
+      });
+    });
+    panel.querySelectorAll('input[data-waive]').forEach(function (cb) {
+      cb.addEventListener("change", function () {
+        var rid = cb.dataset.waive;
+        var i = gateState.waivers.indexOf(rid);
+        if (cb.checked && i < 0) gateState.waivers.push(rid);
+        if (!cb.checked && i >= 0) gateState.waivers.splice(i, 1);
+      });
+    });
+
+    panel.querySelector(".reflow-pn-wcag-confirm").addEventListener("click", function () {
+      // Guard against accidentally publishing without completing the
+      // checklist — same guard the server enforces, but client-side so
+      // faculty doesn't see a 409 they could have avoided.
+      var unchecked = checklistItems.filter(function (it) { return !gateState.checklist[it.id]; });
+      if (unchecked.length) {
+        window.alert("Please confirm every item in the checklist before publishing.");
+        return;
+      }
+      onConfirm();
+    });
+    panel.querySelector(".reflow-pn-wcag-cancel").addEventListener("click", function () {
+      panel.remove();
+      if (actions) actions.style.display = "";
+      // Re-enable the approve button so faculty can try again or pivot.
+      var ab = actions && actions.querySelector('button[data-action="approve"]');
+      if (ab) { ab.disabled = false; ab.textContent = "✓ Approve & publish"; }
+    });
+  }
+
   // Wire up click handlers on the approval buttons. Called from inside
   // openFormatsModal after the modal is in the DOM.
   function _wireApprovalActions(modal, payload, refreshCallback) {
@@ -1938,46 +2084,72 @@
                  : null;
       if (prompt && !window.confirm(prompt)) return;
       btn.disabled = true; btn.textContent = "Working…";
-      try {
-        var r = await fetch(
+
+      // Persist gate state across the (potentially) multi-pass approve
+      // flow. The server runs WCAG + checklist gates; we may need to
+      // re-POST with waivers + checklist filled in. ``reject``,
+      // ``request_edits`` and ``unpublish`` ignore both fields.
+      var gateState = {
+        waivers: [],
+        checklist: { headings: false, alt_text: false, tables: false, reading_order: false }
+      };
+
+      async function _sendApprovalRequest() {
+        return await fetch(
           ORIGIN + "/canvas/panorama/" + endpoint + "/" + encodeURIComponent(payload.job_id),
           {
             method: "POST",
             credentials: "include",
             headers: csrfHeaders(),
-            body: JSON.stringify({ comment: null })
+            body: JSON.stringify({
+              comment: null,
+              waivers: gateState.waivers,
+              checklist: gateState.checklist
+            })
           }
         );
+      }
+
+      try {
+        var r = await _sendApprovalRequest();
+
+        // Gate handling: when REQUIRE_WCAG_GATE=true the backend returns
+        // structured 409s for the two gate failures (unwaived WCAG errors
+        // or an incomplete reviewer checklist). Swap the approval bar
+        // for an inline gate panel so faculty can act on the findings
+        // and resubmit without leaving the modal.
+        if (r.status === 409 && action === "approve") {
+          var gatePayload = await r.json().catch(function () { return {}; });
+          var detail = gatePayload && gatePayload.detail;
+          if (detail && typeof detail === "object" &&
+              (detail.error === "wcag_gate_blocked" || detail.error === "checklist_incomplete")) {
+            _renderWcagGatePanel(bar, detail, gateState, async function () {
+              // Resubmit with the populated gate state. Same handler;
+              // success path below runs through the normal pubBadge code.
+              var rr = await _sendApprovalRequest();
+              if (rr.status === 409) {
+                // Still gated (e.g. faculty waived some findings but
+                // missed the checklist). Re-render with the new detail.
+                var d2 = await rr.json().catch(function () { return {}; });
+                _renderWcagGatePanel(bar, d2.detail || {}, gateState, arguments.callee);
+                return;
+              }
+              if (!rr.ok) {
+                var t2 = await rr.text();
+                window.alert("Action failed: HTTP " + rr.status + ": " + t2.slice(0, 200));
+                return;
+              }
+              _showApprovalSuccess(bar, "approve");
+            });
+            return;
+          }
+        }
+
         if (!r.ok) {
           var txt = await r.text();
           throw new Error("HTTP " + r.status + ": " + txt.slice(0, 200));
         }
-        // Success — give clear in-place feedback. Reopening with the stale
-        // in-memory payload (still 'awaiting_review') would look like nothing
-        // happened. The score cache is cleared server-side by put_job, so the
-        // row dial refreshes on the overlay's next scan.
-        var pubBadge, pubColor, pubMsg;
-        if (action === "approve") {
-          pubBadge = "APPROVED"; pubColor = "#2e7d32";
-          pubMsg = "Published — this accessible version is now visible to students.";
-        } else if (action === "reject") {
-          pubBadge = "REJECTED"; pubColor = "#b00020";
-          pubMsg = "Rejected — this version is hidden from students.";
-        } else if (action === "unpublish") {
-          pubBadge = "DRAFT"; pubColor = "#cc7a00";
-          pubMsg = "Unpublished — hidden from students and removed from the Pages list. Re-publish anytime with Approve & publish.";
-        } else {
-          pubBadge = "DRAFT"; pubColor = "#cc7a00";
-          pubMsg = "Pulled back to draft for more edits.";
-        }
-        var pubActions = bar.querySelector(".reflow-pn-approval-actions");
-        if (pubActions) pubActions.remove();
-        var pubLeft = bar.querySelector(".reflow-pn-approval-left");
-        if (pubLeft) {
-          pubLeft.innerHTML =
-            '<span class="reflow-pn-status-badge" style="background:' + pubColor + '">' + pubBadge + '</span>' +
-            '<span class="reflow-pn-approval-msg">' + esc(pubMsg) + '</span>';
-        }
+        _showApprovalSuccess(bar, action);
       } catch (err) {
         btn.disabled = false;
         btn.textContent = action === "approve" ? "✓ Approve & publish"
