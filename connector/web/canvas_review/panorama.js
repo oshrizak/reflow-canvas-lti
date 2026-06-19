@@ -48,18 +48,25 @@
 
   // Catalogue of formats the modal shows. live=true means the backend
   // is wired; the rest are visible-but-disabled placeholders.
+  // ``download: true`` means the format card should auto-download to
+  // the user's downloads folder without opening a new tab. That's the
+  // right UX for binary / file artifacts (PDF, EPUB, MP3, BRF, plain
+  // text, markdown). Formats that render as a webpage in the browser
+  // (HTML preview, HTML-with-math, Translate output, Immersive Reader)
+  // stay as ``target="_blank"`` so faculty actually see the rendered
+  // page in a new tab.
   var FORMATS = [
     { id: "source", label: "Source File", icon: "📄", color: "#0a5fb5", live: true },
     { id: "html", label: "Accessible HTML", icon: "🌐", color: "#0a5fb5", live: true },
     { id: "html-math", label: "HTML with Math", icon: "∑", color: "#5b3da6", live: true },
-    { id: "txt", label: "Plain Text", icon: "🅣", color: "#2e7d32", live: true },
-    { id: "markdown", label: "Markdown", icon: "📝", color: "#1d1d1d", live: true },
-    { id: "epub", label: "ePub", icon: "📚", color: "#0e7a8a", live: true },
-    { id: "audio", label: "Audio (MP3)", icon: "🎧", color: "#2e7d32", live: true },
+    { id: "txt", label: "Plain Text", icon: "🅣", color: "#2e7d32", live: true, download: true },
+    { id: "markdown", label: "Markdown", icon: "📝", color: "#1d1d1d", live: true, download: true },
+    { id: "epub", label: "ePub", icon: "📚", color: "#0e7a8a", live: true, download: true },
+    { id: "audio", label: "Audio (MP3)", icon: "🎧", color: "#2e7d32", live: true, download: true },
     { id: "translate", label: "Translate…", icon: "🌐", color: "#2e7d32", live: true, picker: "language" },
-    { id: "ocr", label: "Searchable PDF", icon: "🔎", color: "#cc7a00", live: true },
+    { id: "ocr", label: "Searchable PDF", icon: "🔎", color: "#cc7a00", live: true, download: true },
     { id: "immersive", label: "Immersive Reader", icon: "👁", color: "#5b3da6", live: true },
-    { id: "braille", label: "Braille (BRF)", icon: "⠿", color: "#5b3da6", live: true }
+    { id: "braille", label: "Braille (BRF)", icon: "⠿", color: "#5b3da6", live: true, download: true }
   ];
 
   // Language options for the Translate dialog. Covers CSUEB's largest
@@ -714,7 +721,18 @@
           // Append ?preview=1 so the backend bypasses the published-only gate.
           var previewSuffix = (payload.job_status !== "published" && STATE.userRole === "Instructor") ? "?preview=1" : "";
           el.href = ORIGIN + "/canvas/panorama/alt/" + encodeURIComponent(payload.job_id || "") + "/" + fmt.id + previewSuffix;
-          el.target = "_blank"; el.rel = "noopener";
+          if (fmt.download) {
+            // ``download`` attribute on a same-origin link tells the
+            // browser to save the response without navigating. Leaving
+            // it empty defers the filename to the server's
+            // Content-Disposition header (set by the alt-format route).
+            // No ``target="_blank"`` here — that would briefly open an
+            // empty tab while the connector renders, which is what
+            // faculty noticed and asked to fix.
+            el.setAttribute("download", "");
+          } else {
+            el.target = "_blank"; el.rel = "noopener";
+          }
         }
       } else {
         el.setAttribute("aria-disabled", "true");
