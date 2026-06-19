@@ -70,8 +70,15 @@ def render_pii_approval_page(
     course_id: str | None,
     findings: list[dict[str, Any]],
     decision_url: str,
+    csrf_token: str | None = None,
 ) -> str:
-    """Return a complete HTML document with the PII approval form."""
+    """Return a complete HTML document with the PII approval form.
+
+    ``csrf_token`` is sent as the ``X-CSRF-Token`` header on the
+    decision POST. The decision endpoint requires it, so when the
+    caller doesn't provide one (legacy callers without session
+    context) the submission will be rejected with a clear error.
+    """
 
     rows = _summarize_findings(findings)
     if rows:
@@ -247,10 +254,13 @@ def render_pii_approval_page(
       ? "Submitting approval — Reflow will continue processing…"
       : "Submitting denial — the source file will be removed…");
     try {{
+      const headers = {{ "Content-Type": "application/json" }};
+      const csrf = {(repr(csrf_token) if csrf_token else "null")};
+      if (csrf) headers["X-CSRF-Token"] = csrf;
       const resp = await fetch(decisionUrl, {{
         method: "POST",
         credentials: "include",
-        headers: {{ "Content-Type": "application/json" }},
+        headers: headers,
         body: JSON.stringify({{ decision: decision, justification: justification }}),
       }});
       const payload = await resp.json().catch(() => ({{}}));

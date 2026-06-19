@@ -93,6 +93,11 @@ async def api_pending(
             "created_at": j.created_at,
             "canvas_page_url": j.canvas_page_url,
             "canvas_page_id": j.canvas_page_id,
+            # ``status`` lets the index.html row badge + the Review button
+            # route to the right surface: ``awaiting_review`` jobs go to
+            # the side-by-side accessibility review; ``awaiting_approval``
+            # jobs go to the PII gate page.
+            "status": j.status,
         }
         for j in jobs
     ]
@@ -229,6 +234,67 @@ async def review_canvas_page_proxy(
 </body>
 </html>"""
     )
+
+
+@router.get("/{job_id}/pii", response_class=HTMLResponse)
+async def review_pii(
+    job_id: str,
+    redis: Redis = Depends(get_redis_client),
+    reflow_lti_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> HTMLResponse:
+    """PII approval surface inside the LTI tool.
+
+    Renders the same approval form the alt-route's panorama gate uses,
+    but wrapped in a route the Accessible Documents queue can deep-link
+    to. The form's POST target is the existing
+    ``/canvas/panorama/pii-decision/{job_id}`` endpoint (CSRF-protected,
+    session-scoped); the token is generated server-side here and
+    embedded into the page so the submit actually succeeds.
+    """
+    session = await _require_session(redis, reflow_lti_session)
+    job = await get_job(redis, job_id)
+    if job is None or job.canvas_course_id != session.course_id:
+        raise HTTPException(status_code=404, detail="Unknown job")
+
+    # Pull the latest findings from Reflow. If Reflow has already moved
+    # the job past awaiting_approval (e.g., a parallel tab approved it
+    # already, or the gate timed out and Reflow auto-decided), show a
+    # short note so faculty isn't stuck on a dead form.
+    from ..canvas.reflow_client import ReflowClient
+
+    reflow = ReflowClient()
+    try:
+        status = await reflow.get_status(job_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("PII page: reflow status fetch failed for %s: %s", job_id, exc)
+        raise HTTPException(
+            status_code=502, detail="Could not reach Reflow"
+        ) from exc
+
+    if status.get("status") != "awaiting_approval":
+        return HTMLResponse(
+            f"<main style='font-family:system-ui;padding:2rem;max-width:48rem;'>"
+            f"<h1>This document is no longer awaiting PII review.</h1>"
+            f"<p>Current Reflow status: <code>{status.get('status')}</code>. "
+            f"You can return to the queue to see the next item.</p>"
+            f"<p><a href='/canvas/review?course_id="
+            f"{job.canvas_course_id}'>← Back to Accessible Documents</a></p>"
+            f"</main>"
+        )
+
+    findings = status.get("pii_findings") or status.get("pii") or []
+    from ._pii_approval_page import render_pii_approval_page
+    from .canvas_panorama import _csrf_token_for
+
+    page = render_pii_approval_page(
+        job_id=job_id,
+        file_name=job.canvas_file_name,
+        course_id=job.canvas_course_id,
+        findings=findings,
+        decision_url=f"/canvas/panorama/pii-decision/{job_id}",
+        csrf_token=_csrf_token_for(reflow_lti_session or ""),
+    )
+    return HTMLResponse(page)
 
 
 @router.post("/{job_id}/approve")

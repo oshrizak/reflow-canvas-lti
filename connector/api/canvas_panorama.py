@@ -520,7 +520,7 @@ async def alt_format(
     # For interactive HTML formats we render the approval UI inline; for
     # downloadable formats (epub, audio, braille) we return a clear 409
     # pointing the caller back at the HTML URL so they can act on it.
-    pii_gate = await _maybe_pii_gate_response(job_id, job, fmt)
+    pii_gate = await _maybe_pii_gate_response(job_id, job, fmt, session_id=session_id)
     if pii_gate is not None:
         return pii_gate
 
@@ -877,6 +877,8 @@ async def _maybe_pii_gate_response(
     job_id: str,
     job: Any,
     fmt: str,
+    *,
+    session_id: str | None = None,
 ) -> Response | None:
     """If the Reflow job is paused at awaiting_approval, return a gate response.
 
@@ -917,6 +919,11 @@ async def _maybe_pii_gate_response(
             course_id=course_id,
             findings=findings,
             decision_url=decision_url,
+            # Without this the embedded form POSTs without X-CSRF-Token
+            # and the decision endpoint 403s. The token is bound to the
+            # session id, so callers without a session (e.g., students
+            # who shouldn't be approving anyway) get a no-token form.
+            csrf_token=_csrf_token_for(session_id) if session_id else None,
         )
         # 200 so the iframe doesn't render an error chrome around the page;
         # the body itself communicates the gated state.

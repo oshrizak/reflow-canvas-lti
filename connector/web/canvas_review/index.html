@@ -13,17 +13,20 @@
   th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid #ddd; }
   th { font-weight: 600; }
   a.button { display: inline-block; padding: 0.4rem 0.8rem; border: 1px solid #888; border-radius: 4px; text-decoration: none; color: inherit; }
+  .badge { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.02em; }
+  .badge-accessibility { background: #e6f0fb; color: #0b3b6e; }   /* WCAG AA: 7.4:1 */
+  .badge-pii { background: #fff1d6; color: #6b3a00; }              /* WCAG AA: 7.0:1 */
   .empty { padding: 2rem 0; color: #666; font-style: italic; }
 </style>
 </head>
 <body>
   <h1>Accessible Documents — Review queue</h1>
-  <p class="lede">Hello, {{ user_name }}. Each row is a PDF that has been converted into a draft Canvas Page. Open one to review it before students see it.</p>
+  <p class="lede">Hello, {{ user_name }}. Each row is a PDF that needs your decision before students see it. The badge tells you what kind of review is being requested.</p>
 
   <div id="status" aria-live="polite"></div>
   <table id="queue" hidden>
     <thead>
-      <tr><th>Filename</th><th>Submitted</th><th>Action</th></tr>
+      <tr><th>Filename</th><th>Needs</th><th>Submitted</th><th>Action</th></tr>
     </thead>
     <tbody></tbody>
   </table>
@@ -37,6 +40,23 @@
   const empty = document.getElementById("empty");
   const statusEl = document.getElementById("status");
 
+  // The PII gate (``awaiting_approval``) wants a privacy decision before
+  // Reflow even starts producing the accessible version. The accessibility
+  // gate (``awaiting_review``) is the final approval before publishing the
+  // generated page. Different surfaces, different language.
+  function badgeFor(status) {
+    if (status === "awaiting_approval") {
+      return '<span class="badge badge-pii">PII review</span>';
+    }
+    return '<span class="badge badge-accessibility">Accessibility review</span>';
+  }
+  function actionUrlFor(job) {
+    const id = encodeURIComponent(job.reflow_job_id);
+    return job.status === "awaiting_approval"
+      ? `/canvas/review/${id}/pii`
+      : `/canvas/review/${id}`;
+  }
+
   async function load() {
     statusEl.textContent = "Loading…";
     try {
@@ -49,13 +69,20 @@
         table.hidden = true; empty.hidden = false; return;
       }
       table.hidden = false; empty.hidden = true;
+      // Sort PII gates to the top — they block Reflow's processing entirely,
+      // so they're the more urgent decision.
+      data.jobs.sort((a, b) => {
+        if (a.status === b.status) return a.created_at - b.created_at;
+        return a.status === "awaiting_approval" ? -1 : 1;
+      });
       for (const job of data.jobs) {
         const tr = document.createElement("tr");
         const submitted = new Date(job.created_at * 1000).toLocaleString();
         tr.innerHTML = `
           <td>${escapeHtml(job.filename)}</td>
+          <td>${badgeFor(job.status)}</td>
           <td>${submitted}</td>
-          <td><a class="button" href="/canvas/review/${encodeURIComponent(job.reflow_job_id)}">Review</a></td>
+          <td><a class="button" href="${actionUrlFor(job)}">Review</a></td>
         `;
         tbody.appendChild(tr);
       }

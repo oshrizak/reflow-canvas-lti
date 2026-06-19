@@ -135,7 +135,11 @@ async def put_job(redis: Redis, job: CanvasJob) -> None:
         await redis.delete(tk("canvas:score:{job_id}").format(job_id=job.reflow_job_id))
     except Exception:  # noqa: BLE001
         pass
-    if job.status == "awaiting_review":
+    # Both statuses warrant faculty action in the LTI tool's queue:
+    # ``awaiting_review`` is the accessibility-approval gate; ``awaiting_approval``
+    # is the upstream PII gate. The tool index renders them with distinct
+    # badges so faculty know which decision they're being asked to make.
+    if job.status in ("awaiting_review", "awaiting_approval"):
         await redis.sadd(
             PENDING_KEY.format(course_id=job.canvas_course_id), job.reflow_job_id
         )
