@@ -245,15 +245,39 @@ async def approve(
 
     # When the API token lacks manage_wiki, the bridge worker skips Canvas
     # Page creation and leaves canvas_page_url empty. Approval is still
-    # meaningful in that case - it transitions the job to "published" so
+    # meaningful in that case — it transitions the job to "published" so
     # the panorama overlay serves the alt formats to students. We only
     # call publish_page when an actual Canvas Page exists.
-    canvas = CanvasClient()
+    publish_warning: str | None = None
     if job.canvas_page_url:
-        await canvas.publish_page(job.canvas_course_id, job.canvas_page_url)
+        from ..workers.reflow_bridge_worker import _canvas_client_for_job
+
+        canvas = await _canvas_client_for_job(redis, job)
+        try:
+            await canvas.publish_page(job.canvas_course_id, job.canvas_page_url)
+        except Exception as exc:  # noqa: BLE001
+            # Surface the failure but still flip the status — the
+            # connector-hosted alt formats become available immediately,
+            # and the bridge keeps retrying the Canvas Page publish in
+            # the background once the OAuth scope shows up.
+            logger.warning(
+                "publish_page failed during approve for job %s: %s",
+                job_id, exc,
+            )
+            publish_warning = (
+                "The accessible alt formats are now available to students "
+                "through the LTI tool, but Canvas refused the Page publish. "
+                "Re-run Authorize Reflow (Settings → Apps) so the OAuth "
+                "token has page-write scope, then the bridge will publish "
+                "the Page automatically on its next tick."
+            )
     job.status = "published"
     await put_job(redis, job)
-    return JSONResponse({"ok": True, "page_url": job.canvas_page_url or ""})
+    return JSONResponse({
+        "ok": True,
+        "page_url": job.canvas_page_url or "",
+        "warning": publish_warning,
+    })
 
 
 @router.post("/{job_id}/reject")
@@ -268,7 +292,9 @@ async def reject(
         raise HTTPException(status_code=404, detail="Unknown job")
 
     if job.canvas_page_url:
-        canvas = CanvasClient()
+        from ..workers.reflow_bridge_worker import _canvas_client_for_job
+
+        canvas = await _canvas_client_for_job(redis, job)
         try:
             await canvas.delete_page(job.canvas_course_id, job.canvas_page_url)
         except Exception:

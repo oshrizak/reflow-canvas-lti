@@ -90,11 +90,23 @@
     statusEl.textContent = action === "approve" ? "Publishing…" : "Rejecting…";
     try {
       const resp = await fetch(`/canvas/review/${encodeURIComponent(jobId)}/${action}`, { method: "POST" });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      statusEl.textContent = action === "approve"
-        ? "Published. Students can now see this page."
-        : "Rejected. The draft has been deleted.";
-      setTimeout(() => { window.location.href = `/canvas/review?course_id=${encodeURIComponent(courseId)}`; }, 1500);
+      const body = await resp.json().catch(() => ({}));
+      if (!resp.ok) {
+        throw new Error(body.detail || `HTTP ${resp.status}`);
+      }
+      if (action === "approve") {
+        statusEl.textContent = body.warning
+          ? `Approved. ${body.warning}`
+          : "Published. Students can now see this page.";
+      } else {
+        statusEl.textContent = "Rejected. The draft has been deleted.";
+      }
+      // Hold the warning on screen a beat longer so faculty actually
+      // reads it before we navigate away.
+      const dwell = body.warning ? 6000 : 1500;
+      setTimeout(() => {
+        window.location.href = `/canvas/review?course_id=${encodeURIComponent(courseId)}`;
+      }, dwell);
     } catch (err) {
       statusEl.textContent = `Failed: ${err.message}`;
     }
