@@ -596,6 +596,36 @@
     return payload.status === "scored" || js === "published";
   }
 
+  // Typography helper shared between the row dial and the big modal dial.
+  // For numeric percentages we split into a large number + a small
+  // superscript "%" so the digits get the visual breathing room they need.
+  // For single-character labels (—, …, !, ✓) a single centered glyph is
+  // cleaner than padding it out with a percent sign that doesn't apply.
+  // ``sizes`` is a ``{num, pct, single}`` triple so the same helper can
+  // serve both the 36-px row dial and the 52-px modal dial.
+  function _dialTextSvg(label, color, sizes) {
+    var s = sizes || { num: 14, pct: 7, single: 16 };
+    var fam = "system-ui,-apple-system,Segoe UI,sans-serif";
+    var pctMatch = String(label).match(/^(\d+)%$/);
+    if (pctMatch) {
+      var num = pctMatch[1];
+      // ``100`` is 3 chars so shave a point off the number font to keep
+      // the kerning inside the ring; ``98`` is 2 chars and gets full size.
+      var nfs = num.length >= 3 ? Math.max(s.num - 1, 10) : s.num;
+      return (
+        '<text x="18" y="21.5" text-anchor="middle" font-weight="700" font-family="' + fam + '" fill="' + color + '" letter-spacing="-0.4">' +
+        '<tspan font-size="' + nfs + '">' + num + '</tspan>' +
+        '<tspan font-size="' + s.pct + '" dy="-3" dx="0.5">%</tspan>' +
+        '</text>'
+      );
+    }
+    // Non-numeric labels: single glyph, slightly lower y to optically
+    // center within the ring.
+    return (
+      '<text x="18" y="22.5" text-anchor="middle" font-size="' + s.single + '" font-weight="700" font-family="' + fam + '" fill="' + color + '">' + label + '</text>'
+    );
+  }
+
   function makeDial(payload, filename, opts) {
     var v = (opts && opts.accessible) ? accessibleDialView(payload) : dialView(payload);
     var score = v.score;
@@ -607,13 +637,18 @@
     btn.className = "reflow-pn-dial reflow-pn-sev-" + severity;
     btn.title = v.title;
     btn.setAttribute("aria-label", v.aria);
+    // Slimmer stroke + lighter track + split number/percent typography
+    // give the dial a polished, production-ready feel without changing
+    // the size of the slot in the actions cell. The viewBox stays 36×36
+    // (with r=15.9155 so 2πr ≈ 100, letting stroke-dasharray take a raw
+    // percentage value).
     btn.innerHTML =
       '<svg viewBox="0 0 36 36" width="36" height="36" aria-hidden="true">' +
-      '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#d0d4d8" stroke-width="3"/>' +
-      '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="' + color + '" stroke-width="3"' +
+      '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#eef0f3" stroke-width="2.6"/>' +
+      '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="' + color + '" stroke-width="2.6"' +
       '          stroke-dasharray="' + score + ' ' + (100 - score) + '" stroke-dashoffset="25"' +
       '          stroke-linecap="round" transform="rotate(-90 18 18)"/>' +
-      '  <text x="18" y="22" text-anchor="middle" font-size="13" font-weight="700" font-family="system-ui,-apple-system,Segoe UI,sans-serif" fill="' + color + '">' + label + '</text>' +
+      _dialTextSvg(label, color, { num: 14, pct: 7, single: 16 }) +
       '</svg>';
     btn.addEventListener("click", function (e) {
       e.preventDefault(); e.stopPropagation();
@@ -686,14 +721,16 @@
     // student-actionable).
     var dialContainer = modal.querySelector(".reflow-pn-report-dial");
     if (dialContainer) {
+      // Same look as the row dial, sized up. Sizes tuned so the modal's
+      // 52×52 render gives the digits room to breathe at high DPI.
+      var mLabel = (score === null) ? "—" : (score + "%");
       dialContainer.innerHTML =
         '<svg viewBox="0 0 36 36" width="52" height="52" aria-hidden="true">' +
-        '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#e8eaed" stroke-width="3.2"/>' +
-        '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="' + color + '" stroke-width="3.2"' +
+        '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#eef0f3" stroke-width="2.6"/>' +
+        '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="' + color + '" stroke-width="2.6"' +
         '          stroke-dasharray="' + (score || 0) + ' ' + (100 - (score || 0)) + '" stroke-dashoffset="25"' +
         '          stroke-linecap="round" transform="rotate(-90 18 18)"/>' +
-        '  <text x="18" y="21" text-anchor="middle" font-size="9" font-weight="700" fill="' + color + '">' +
-        (score === null ? "—" : (score + "%")) + '</text>' +
+        _dialTextSvg(mLabel, color, { num: 11, pct: 6, single: 13 }) +
         '</svg>';
     }
 
