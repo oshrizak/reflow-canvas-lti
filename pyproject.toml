@@ -45,6 +45,12 @@ dependencies = [
     # Searchable PDF endpoint for born-digital inputs where ocrmypdf
     # would otherwise just pass the original through unchanged.
     "weasyprint>=62",
+    # matplotlib renders LaTeX math (and a lightly pre-processed subset
+    # of mhchem chemistry) to inline SVG so the Tagged PDF path can
+    # show equations even though WeasyPrint doesn't execute JavaScript.
+    # ``mathtext`` is a pure-Python LaTeX subset that doesn't require a
+    # system TeX install.
+    "matplotlib>=3.8",
     # Observability
     "prometheus-client>=0.19.0",
 ]
@@ -167,5 +173,7 @@ module = [
     "anthropic.*",
     "weasyprint",
     "weasyprint.*",
+    "matplotlib",
+    "matplotlib.*",
 ]
 ignore_missing_imports = true

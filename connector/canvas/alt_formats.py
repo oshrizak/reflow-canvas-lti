@@ -435,11 +435,16 @@ def render_tagged_pdf(rendered: RenderedPage, *, base_url: str | None = None) ->
             "libgdk-pixbuf system libraries."
         ) from exc
 
-    # ``html_full_document`` auto-enables MathJax when math is detected,
-    # but WeasyPrint doesn't execute JavaScript — math will appear as
-    # the literal LaTeX source. That's an acceptable trade-off for
-    # textual fidelity; the structure tree is the win we're after.
+    # WeasyPrint doesn't execute JavaScript, so MathJax can't render
+    # the LaTeX math the canonical HTML carries. Pre-render each math
+    # span to inline SVG server-side via matplotlib's mathtext, then
+    # let WeasyPrint embed the SVG into the tagged PDF. The original
+    # LaTeX source rides along as the image ``alt`` so screen readers
+    # consuming the PDF still get the math content verbatim.
+    from .math_render import mathify_html
+
     html_doc = html_full_document(rendered)
+    html_doc = mathify_html(html_doc)
     return HTML(string=html_doc, base_url=base_url).write_pdf()
 
 
