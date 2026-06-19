@@ -23,6 +23,10 @@
 <body>
   <header>
     <h1>{{ filename }}</h1>
+    <a id="open-in-canvas" hidden href="#" target="_blank" rel="noopener"
+       style="padding:0.5rem 1rem;border:1px solid #006633;color:#006633;text-decoration:none;border-radius:4px;">
+       Open in Canvas &#8599;
+    </a>
     <button class="primary" id="approve">Approve &amp; publish</button>
     <button class="danger" id="reject">Reject</button>
   </header>
@@ -44,24 +48,22 @@
   const pageUrl = "{{ canvas_page_url }}";
   const statusEl = document.getElementById("status");
 
-  // Pick what to preview:
-  //   1. If the bridge succeeded in writing a Canvas Page, embed the
-  //      Canvas page directly — that's the artifact the student would
-  //      actually open. (Bug history: the old code built a relative
-  //      ``/api/v1/courses/…/pages/<full-url>/preview`` URL that hit the
-  //      connector instead of Canvas, and stuffed the FULL canvas page
-  //      URL into the slug segment. 404 every time.)
-  //   2. If the page write hasn't succeeded yet (page_failed state, the
-  //      OAuth token was missing Pages-write scope etc.), fall back to
-  //      the connector's own rendered accessible HTML so faculty can
-  //      still review what would have published.
+  // Canvas refuses to be iframed by external origins — its CSP
+  // ``frame-ancestors`` directive only allows its own institutional
+  // hosts. So we *always* preview the connector's own rendered
+  // accessible HTML in the iframe (same origin, no CSP issue); when
+  // the bridge successfully wrote a Canvas Page, we expose it via an
+  // "Open in Canvas" link in the header instead of trying to embed it.
   const preview = document.getElementById("preview");
-  if (pageUrl) {
-    preview.src = pageUrl;
-  } else if (jobId) {
+  if (jobId) {
     preview.src = `/canvas/panorama/alt/${encodeURIComponent(jobId)}/html`;
   } else {
     statusEl.textContent = "No previewable content for this job yet.";
+  }
+  if (pageUrl) {
+    const openLink = document.getElementById("open-in-canvas");
+    openLink.href = pageUrl;
+    openLink.hidden = false;
   }
 
   async function act(action) {
