@@ -508,18 +508,29 @@
     var pageFailedNote = (js === "page_failed")
       ? " (Canvas Page not created — click for details)"
       : "";
-    // Instructors: show the original PDF's source estimate (the "before").
+    // Instructors: show two independent measurements. These are NOT a
+    // before/after of the same thing — the source_score is veraPDF's
+    // PDF/UA-1 validation of the original PDF (1000+ rules, fractional),
+    // while score is our WCAG structural checks on the generated HTML
+    // (a focused subset, penalty-based). Faculty asked us to stop
+    // implying improvement when the two simply measure different things.
     if (hasSource) {
       var ss = payload.source_score;
       var ssev = payload.source_severity || severityFor(ss);
       var after = hasOutput
-        ? (" → accessible version " + payload.score + "%")
+        ? (" · Generated HTML (WCAG): " + payload.score + "%")
         : "";
       return { score: ss, label: ss + "%", color: COLORS[ssev] || COLORS.red,
                severity: ssev,
-               title: "Original PDF ~" + ss + "% accessible" + after + pageFailedNote + " — open Alternative Formats Menu",
-               aria: "Original PDF is about " + ss + " percent accessible"
-                     + (hasOutput ? ("; an accessible version scoring " + payload.score + " percent is available") : "")
+               title: "Original PDF (PDF/UA): " + ss + "%" + after + pageFailedNote
+                      + " — different measurements, not a before/after. Click to open."
+                      ,
+               aria: "Original PDF scores " + ss
+                     + " percent on PDF slash UA dash 1 by veraPDF"
+                     + (hasOutput ? ("; generated HTML scores " + payload.score
+                                    + " percent on a WCAG structural check subset. "
+                                    + "These measure different documents and are not directly comparable")
+                                  : "")
                      + (js === "page_failed" ? "; Canvas Page could not be created" : "")
                      + ". Open Alternative Formats Menu." };
     }
@@ -1491,30 +1502,36 @@
   function _renderReportHeader(payload, score, color) {
     var isInstructor = STATE.userRole === "Instructor";
     if (isInstructor) {
-      // Before → after. Left: estimated accessibility of the ORIGINAL PDF
-      // (derived from its source type). Right: WCAG score of the accessible
-      // version we generated. The big dial mirrors the "after" number.
+      // Two independent measurements — NOT a before/after of the same
+      // thing. Faculty correctly flagged the older labelling as
+      // misleading when the right number was lower than the left. The
+      // two scores use different tools (veraPDF vs. our WCAG subset),
+      // different documents (PDF vs. HTML), and different formulas
+      // (proportional vs. penalty-based) so direct comparison isn't
+      // meaningful.
       var hasSource = typeof payload.source_score === "number";
       var srcSev = payload.source_severity || severityFor(payload.source_score);
       var srcColor = COLORS[srcSev] || COLORS.unscanned;
-      var beforePill = hasSource
+      var srcPill = hasSource
         ? '<span class="reflow-pn-pill" style="background:' + srcColor + '">' + payload.source_score + '%</span>'
-        : '<span class="reflow-pn-pill reflow-pn-pill-grey">not estimated</span>';
-      var afterPill = (score === null)
+        : '<span class="reflow-pn-pill reflow-pn-pill-grey">not audited</span>';
+      var htmlPill = (score === null)
         ? '<span class="reflow-pn-pill reflow-pn-pill-grey">not yet scored</span>'
         : '<span class="reflow-pn-pill" style="background:' + color + '">' + score + '%</span>';
       return '<section class="reflow-pn-modal-report">' +
         '  <div class="reflow-pn-report-text">' +
-        '    <span class="reflow-pn-report-label">Accessibility</span>' +
+        '    <span class="reflow-pn-report-label">Two accessibility measurements</span>' +
         '    <span class="reflow-pn-beforeafter">' +
-        '      <span class="reflow-pn-ba-item"><small>Original PDF</small>' + beforePill + '</span>' +
-        '      <span class="reflow-pn-ba-arrow" aria-hidden="true">→</span>' +
-        '      <span class="reflow-pn-ba-item"><small>Accessible version</small>' + afterPill + '</span>' +
+        '      <span class="reflow-pn-ba-item"><small>Original PDF — PDF/UA-1 (veraPDF)</small>' + srcPill + '</span>' +
+        '      <span class="reflow-pn-ba-arrow" aria-hidden="true">·</span>' +
+        '      <span class="reflow-pn-ba-item"><small>Generated HTML — WCAG checks</small>' + htmlPill + '</span>' +
         '    </span>' +
         '    <span class="reflow-pn-report-hint reflow-pn-report-hint-inline">' +
-        '      Left: estimated accessibility of the original PDF, from its source type. ' +
-        '      Right: automated WCAG checks on the accessible version we generated (alt text, headings, language, tables…). ' +
-        '      A helpful screen, <strong>not</strong> a full manual audit — review before publishing.' +
+        '      <strong>These are not directly comparable.</strong> ' +
+        '      The left number is veraPDF’s PDF/UA-1 validation of the original PDF (fraction of ~1000 rules passing). ' +
+        '      The right number is our WCAG structural check subset on the generated HTML ' +
+        '      (penalty-based: one error costs 12 points). They measure two different documents with two different tools — ' +
+        '      a number being lower on either side does NOT mean accessibility regressed.' +
         '    </span>' +
         '  </div>' +
         '  <div class="reflow-pn-report-dial"></div>' +
