@@ -24,6 +24,41 @@ from .markdown_to_html import RenderedPage, render
 logger = logging.getLogger(__name__)
 
 
+# Anything between these markers (or these stand-alone forms) is math.
+# Used to (a) auto-enable MathJax in the HTML wrapper and (b) decide
+# whether Braille goes through the Nemeth code rather than en-us-g2.
+# Conservative — false positives only cost a MathJax script load.
+_MATH_RE = re.compile(
+    # ``$$...$$`` and ``\[...\]`` (display) plus ``$...$`` and ``\(...\)``
+    # (inline). ``mhchem`` chemistry markup ``\ce{...}`` and ``\pu{...}``.
+    # The inline ``$...$`` form is tightened to require non-whitespace
+    # adjacent to both delimiters — otherwise prose with money values
+    # ("a price of $5 and another $7…") matches and we erroneously
+    # load MathJax + route to Nemeth Braille for non-math documents.
+    r"(\$\$[\s\S]+?\$\$)"
+    r"|(\\\[[\s\S]+?\\\])"
+    r"|(\$(?!\s)[^\$\n]*?[^\s\$]\$)"
+    r"|(\\\([\s\S]+?\\\))"
+    r"|(\\ce\{[^{}]+\})"
+    r"|(\\pu\{[^{}]+\})"
+)
+
+
+def has_math_content(rendered_or_text: RenderedPage | str) -> bool:
+    """True when the source carries LaTeX math or mhchem chemistry markup.
+
+    Callers use this to flip on MathJax in the HTML wrapper and to route
+    Braille rendering through a Nemeth-aware table. Cheap regex scan; on
+    a 200KB textbook chapter it runs in microseconds.
+    """
+    text = (
+        rendered_or_text.html
+        if isinstance(rendered_or_text, RenderedPage)
+        else str(rendered_or_text or "")
+    )
+    return bool(_MATH_RE.search(text))
+
+
 def canonical_html(
     markdown: str,
     *,
@@ -40,11 +75,35 @@ def canonical_html(
     )
 
 
-def html_full_document(rendered: RenderedPage, *, mathjax: bool = False) -> str:
-    """Wrap the rendered body fragment in a full standalone HTML doc."""
+def html_full_document(rendered: RenderedPage, *, mathjax: bool | None = None) -> str:
+    """Wrap the rendered body fragment in a full standalone HTML doc.
+
+    ``mathjax=None`` (the default) auto-detects: any LaTeX delimiters or
+    ``\\ce{}`` / ``\\pu{}`` chemistry markup in the rendered body turns
+    MathJax on. Pass ``True`` or ``False`` to override (mostly for
+    surfaces that already know — e.g., the ``html-math`` alt-format
+    endpoint forces True for backwards compat).
+
+    When MathJax is on, the loader also pulls the ``mhchem`` extension
+    so chemistry markup like ``\\ce{H2O}`` renders correctly. Screen
+    readers consume MathJax's MathML output, so the math is accessible
+    to AT, not just visible.
+    """
+    if mathjax is None:
+        mathjax = has_math_content(rendered)
     head_extras = ""
     if mathjax:
         head_extras = (
+            "<script>"
+            "window.MathJax = {"
+            "loader: {load: ['[tex]/mhchem']},"
+            "tex: {"
+            "packages: {'[+]': ['mhchem']},"
+            "inlineMath: [['$','$'], ['\\\\(','\\\\)']],"
+            "displayMath: [['$$','$$'], ['\\\\[','\\\\]']]"
+            "}"
+            "};"
+            "</script>"
             '<script async="true" '
             'src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>'
         )
@@ -172,13 +231,20 @@ def _chunks(text: str, size: int) -> list[str]:
 def render_audio_mp3(rendered: RenderedPage, voice: str = "Joanna") -> bytes:
     """Synthesize MP3 audio via Amazon Polly.
 
-    Requires AWS credentials with ``polly:SynthesizeSpeech``. Raises
-    ``RuntimeError`` with a friendly message if credentials/permissions
-    aren't available so the endpoint can return 503.
+    Requires AWS credentials with ``polly:SynthesizeSpeech`` and a
+    region (e.g., ``AWS_DEFAULT_REGION=us-east-1``). Raises
+    ``RuntimeError`` with a clear, actionable message when either is
+    missing — the endpoint surfaces this as a 503, NOT a stack trace.
     """
     try:
         import boto3
-        from botocore.exceptions import BotoCoreError, ClientError
+        from botocore.exceptions import (
+            BotoCoreError,
+            ClientError,
+            NoCredentialsError,
+            NoRegionError,
+            PartialCredentialsError,
+        )
     except ImportError as exc:
         raise RuntimeError("boto3 is not installed") from exc
 
@@ -188,7 +254,14 @@ def render_audio_mp3(rendered: RenderedPage, voice: str = "Joanna") -> bytes:
 
     parts = _chunks(text, 2800)
     audio_chunks: list[bytes] = []
-    polly = boto3.client("polly")
+    try:
+        polly = boto3.client("polly")
+    except NoRegionError as exc:
+        raise RuntimeError(
+            "Audio MP3 requires AWS configuration. Set AWS_DEFAULT_REGION "
+            "(e.g., us-east-1) and AWS_ACCESS_KEY_ID + AWS_SECRET_ACCESS_KEY "
+            "for an IAM user with polly:SynthesizeSpeech permission."
+        ) from exc
     for chunk in parts:
         try:
             resp = polly.synthesize_speech(
@@ -197,6 +270,12 @@ def render_audio_mp3(rendered: RenderedPage, voice: str = "Joanna") -> bytes:
                 VoiceId=voice,
                 Engine="neural",
             )
+        except (NoCredentialsError, PartialCredentialsError) as exc:
+            raise RuntimeError(
+                "Audio MP3 requires AWS credentials. Set AWS_ACCESS_KEY_ID + "
+                "AWS_SECRET_ACCESS_KEY in .env for an IAM user with "
+                "polly:SynthesizeSpeech permission."
+            ) from exc
         except (BotoCoreError, ClientError) as exc:
             raise RuntimeError(f"Polly synthesis failed: {exc}") from exc
         audio_chunks.append(resp["AudioStream"].read())
@@ -207,38 +286,76 @@ async def render_translation(
     rendered: RenderedPage,
     target_lang: str,
 ) -> RenderedPage:
-    """Translate the accessible HTML into ``target_lang`` via the project AI.
+    """Translate the accessible HTML into ``target_lang`` via Anthropic Claude.
 
-    Returns a new RenderedPage with translated body. Requires the
-    pipeline's AI provider to be configured (AI provider API key, or
-    AWS Bedrock credentials).
+    Uses the Anthropic Messages API directly — the pydantic-ai + tier
+    factory the source fork relied on lives in core Reflow and isn't
+    present in the connector. Requires ``ANTHROPIC_API_KEY`` in the
+    environment; raises ``RuntimeError`` with a clear message when it's
+    missing so the endpoint surfaces 503 rather than a stack trace.
+
+    Math/chemistry safety: the prompt explicitly tells the model to
+    leave LaTeX delimiters (``$...$``, ``$$...$$``) and the strings
+    they wrap untouched. We don't want to translate ``E = mc^2`` into
+    Spanish.
     """
-    try:
-        from pydantic_ai import Agent
+    import os
 
-        from ..agents.model_factory import get_model_for_tier
-        from ..agents.model_tiers import ModelTier
+    try:
+        from anthropic import AsyncAnthropic
     except ImportError as exc:
-        raise RuntimeError("PydanticAI is not available") from exc
+        raise RuntimeError(
+            "Translation requires the 'anthropic' package; add it to "
+            "dependencies and rebuild the image."
+        ) from exc
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+    if not api_key:
+        raise RuntimeError(
+            "Translation requires ANTHROPIC_API_KEY in the environment. "
+            "Set it in .env and restart the connector."
+        )
 
     text = html_to_plain_text(rendered)
     if not text:
         raise RuntimeError("Nothing to translate")
 
-    agent = Agent(
-        get_model_for_tier(ModelTier.EFFICIENT),
-        system_prompt=(
-            "You are a translator preserving formatting and accessibility. "
-            "Translate the provided text into the target language. Preserve "
-            "headings, lists, and emphasis. Return ONLY the translated text."
-        ),
+    client = AsyncAnthropic(api_key=api_key)
+    system_prompt = (
+        "You are a translator preserving formatting and accessibility. "
+        "Translate the provided text into the target language. Preserve "
+        "headings, lists, emphasis, and reading order. "
+        "CRITICAL: Do NOT translate text inside LaTeX math delimiters "
+        "(`$...$`, `$$...$$`, `\\(...\\)`, `\\[...\\]`); pass those "
+        "spans through verbatim. Do NOT translate chemical formulas "
+        "(e.g. H2O, CO2) or chemistry MathJax (`\\ce{...}`). "
+        "Return ONLY the translated text — no preamble, no code fences."
     )
-    result = await agent.run(f"Target language: {target_lang}\n\nText:\n{text}")
-    translated = (result.output or "").strip()
+
+    try:
+        message = await client.messages.create(
+            model="claude-sonnet-4-5",
+            max_tokens=4096,
+            system=system_prompt,
+            messages=[{
+                "role": "user",
+                "content": f"Target language: {target_lang}\n\nText:\n{text}",
+            }],
+        )
+    except Exception as exc:  # noqa: BLE001 — surface upstream errors clearly
+        raise RuntimeError(f"Anthropic API error: {exc}") from exc
+
+    translated = ""
+    for block in message.content:
+        if getattr(block, "type", None) == "text":
+            translated += getattr(block, "text", "")
+    translated = translated.strip()
     if not translated:
-        raise RuntimeError("AI returned empty translation")
-    # Wrap as a minimal HTML paragraph block; downstream uses html_full_document.
-    paragraphs = "".join(f"<p>{_escape(p)}</p>" for p in translated.split("\n") if p.strip())
+        raise RuntimeError("Claude returned empty translation")
+
+    paragraphs = "".join(
+        f"<p>{_escape(p)}</p>" for p in translated.split("\n") if p.strip()
+    )
     return RenderedPage(
         title=f"{rendered.title} ({target_lang})",
         html=paragraphs,
@@ -318,9 +435,18 @@ def render_ocr_pdf(original_pdf_bytes: bytes, archival: bool = True) -> bytes:
 def render_braille_brf(rendered: RenderedPage, grade: int = 2, lang_table: str | None = None) -> bytes:
     """Convert the canonical HTML's text to BRF (Braille Ready File).
 
-    Uses ``liblouis`` for translation. Default tables:
-      grade 1 (uncontracted) -> ``en-us-g1.ctb``
-      grade 2 (contracted)   -> ``en-us-g2.ctb``
+    Uses ``liblouis`` for translation. Table selection:
+      * Math / chemistry detected -> ``nemeth.ctb`` (Nemeth code, the
+        US Braille standard for math + science). Handles superscripts,
+        subscripts, Greek letters, operators, and chemical formulas
+        the contracted-text tables would mangle.
+      * Otherwise grade 2 (contracted)  -> ``en-us-g2.ctb``
+      * grade 1 (uncontracted)          -> ``en-us-g1.ctb``
+
+    Explicit ``lang_table`` overrides the auto-pick. The LaTeX
+    delimiters (``$...$`` etc.) are stripped before translation — the
+    Nemeth table transcribes the math content itself, not the markdown
+    fence characters around it.
 
     Output is suitable for refreshable Braille displays and Braille
     embossers. Raises RuntimeError with a friendly message if liblouis
@@ -339,10 +465,20 @@ def render_braille_brf(rendered: RenderedPage, grade: int = 2, lang_table: str |
             "lou_translate not found; install liblouis-bin in the Dockerfile"
         )
 
-    table = lang_table or ("en-us-g2.ctb" if grade == 2 else "en-us-g1.ctb")
+    if lang_table is None:
+        if has_math_content(rendered):
+            # Nemeth handles math symbols natively; stripping the LaTeX
+            # delimiters leaves the math content as plain symbols the
+            # table knows how to transcribe (E=mc^2, integrals, fractions
+            # written as inline LaTeX become legible Nemeth Braille).
+            lang_table = "nemeth.ctb"
+            text = _strip_latex_delimiters(text)
+        else:
+            lang_table = "en-us-g2.ctb" if grade == 2 else "en-us-g1.ctb"
+
     try:
         proc = subprocess.run(
-            [lou, table],
+            [lou, lang_table],
             input=text.encode("utf-8"),
             capture_output=True,
             timeout=60,
@@ -374,6 +510,24 @@ def render_braille_brf(rendered: RenderedPage, grade: int = 2, lang_table: str |
         if cur:
             lines.append(cur)
     return ("\n".join(lines) + "\n").encode("ascii", errors="replace")
+
+
+def _strip_latex_delimiters(text: str) -> str:
+    """Drop ``$...$`` / ``$$...$$`` / ``\\(...\\)`` / ``\\[...\\]`` fences.
+
+    Used before sending math-bearing text to Nemeth Braille — the table
+    transcribes math symbols natively, but the LaTeX fence characters
+    themselves would come out as literal dollar signs or backslashes
+    in the Braille output.
+    """
+    out = re.sub(r"\$\$([\s\S]+?)\$\$", r" \1 ", text)
+    out = re.sub(r"\\\[([\s\S]+?)\\\]", r" \1 ", out)
+    out = re.sub(r"\$([^\$\n]+?)\$", r" \1 ", out)
+    out = re.sub(r"\\\(([\s\S]+?)\\\)", r" \1 ", out)
+    # mhchem chemistry: \ce{H2O} → " H2O ", \pu{} → strip
+    out = re.sub(r"\\ce\{([^{}]+)\}", r" \1 ", out)
+    out = re.sub(r"\\pu\{([^{}]+)\}", r" \1 ", out)
+    return out
 
 
 READER_TEMPLATE = """<!doctype html>

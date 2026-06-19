@@ -13,6 +13,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         default-jre-headless \
         wget \
         unzip \
+        # liblouis provides ``lou_translate`` (the BRF Braille converter
+        # render_braille_brf shells out to). ``liblouis-data`` ships the
+        # contraction tables (en-us-g1.ctb / en-us-g2.ctb).
+        liblouis-bin \
+        liblouis-data \
+        # ``liblouisutdml-bin`` (file2brl) translates structured HTML/MathML
+        # into formatted Braille. We don't shell out to it yet, but it's a
+        # natural upgrade path for math/chemistry Braille (MathML in →
+        # Nemeth out) and the install is cheap.
+        liblouisutdml-bin \
     && rm -rf /var/lib/apt/lists/*
 
 # Install VeraPDF — the official PDF/UA-1 (WCAG-mapped) accessibility

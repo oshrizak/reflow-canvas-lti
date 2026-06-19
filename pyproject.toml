@@ -35,6 +35,11 @@ dependencies = [
     "ocrmypdf>=16.0",
     "pdf2image>=1.17.0",
     "pymupdf>=1.24",
+    # Translation calls Claude directly (Sonnet 4.5). The source fork's
+    # pydantic-ai + model-tier indirection lives in core Reflow; the
+    # connector talks to the Messages API straight to avoid carrying
+    # that dep tree.
+    "anthropic>=0.40",
     # Observability
     "prometheus-client>=0.19.0",
 ]
@@ -153,5 +158,7 @@ module = [
     "pydantic_ai",
     "pydantic_ai.*",
     "connector.agents.*",
+    "anthropic",
+    "anthropic.*",
 ]
 ignore_missing_imports = true

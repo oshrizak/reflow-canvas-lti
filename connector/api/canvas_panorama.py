@@ -24,7 +24,6 @@ from ..canvas.alt_formats import (
     render_reader_html,
     render_translation,
 )
-from ..canvas.client import CanvasClient
 from ..canvas.markdown_to_html import RenderedPage
 from ..canvas.panorama import (
     Issue,
@@ -577,7 +576,15 @@ async def alt_format(
         # / cached links may still request it).
         if not job.canvas_file_id:
             raise HTTPException(status_code=409, detail="No source file id on job")
-        canvas = CanvasClient()
+        # Use the instructor's OAuth token (same per-job client the bridge
+        # and figure proxy use) — Canvas Cloud rejects bare API tokens for
+        # /files/:id, and the legacy ``CanvasClient()`` constructor 500'd
+        # whenever ``CANVAS_API_TOKEN`` wasn't set (i.e., on every install
+        # past Phase 8). The helper falls back through user → owner →
+        # service → env-token, matching what the rest of the connector
+        # already trusts.
+        from ..workers.reflow_bridge_worker import _canvas_client_for_job
+        canvas = await _canvas_client_for_job(redis, job)
         try:
             pdf_bytes = await canvas.download_file(str(job.canvas_file_id))
         except Exception as exc:
