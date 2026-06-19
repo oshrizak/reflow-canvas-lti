@@ -142,6 +142,54 @@ docker cp $(docker compose ps -q redis):/data/dump.rdb ./backups/redis-$(date +%
    successful restore.
 4. Bring the connector back up: `docker compose up -d connector`.
 
+## Data flow (where student content goes)
+
+Document this and pair it with your institutional privacy notice. Every
+external service that sees document content is listed below.
+
+| Service | What sees it | When | Region (default) | DPA |
+|---|---|---|---|---|
+| **Reflow Core** (upstream) | Full PDF bytes; markdown extraction output; figure rasters in S3 | Always (every submission) | Wherever your Reflow Core deploys | Required between the connector operator and the Core operator (same org or otherwise). |
+| **Anthropic Claude** | Plain-text body of the canonical accessible HTML, with LaTeX/`\ce{}` spans preserved | Only when faculty clicks **Translate** and `ANTHROPIC_API_KEY` is set | `https://api.anthropic.com` (US) | Anthropic's standard DPA covers this. |
+| **AWS Polly** | Plain-text body of the canonical accessible HTML | Only when faculty clicks **Audio (MP3)** and AWS credentials are set | `AWS_DEFAULT_REGION` (you choose) | AWS standard DPA. |
+| **Canvas** | Generated accessible HTML (as a Canvas Page), figure raster files (in a course folder) | Every bridge tick that successfully publishes | Wherever your Canvas Cloud / self-host lives | Already in place if you're using Canvas at all. |
+| **Cloudflare** (if tunnel) | Encrypted in transit between your edge and Canvas; sees TLS-terminated request metadata | Whenever Canvas reaches the connector | Cloudflare edge | Your Cloudflare account DPA. |
+
+The connector itself stores in Redis: instructor OAuth tokens
+(encrypted at rest), approval audit log records, document state, and a
+short-lived cache of PDF bytes during figure-proxy responses.
+
+To leave **Translate** and **Audio MP3** off entirely, simply don't set
+`ANTHROPIC_API_KEY` and `AWS_ACCESS_KEY_ID`. The buttons stay in the
+modal and return clean 503s with setup instructions — no document
+content ever leaves the connector.
+
+## Locking down the host file system
+
+`.env` is a plaintext file on the host. Restrict it:
+
+```bash
+chmod 600 .env
+chown root:root .env       # or whichever user runs docker compose
+ls -l .env                 # expect: -rw------- 1 root root
+```
+
+The LTI private key (`keys/lti_private.pem`) wants the same treatment:
+
+```bash
+chmod 600 keys/lti_private.pem
+```
+
+The `redis-data` and `backups/` directories should be owned by the same
+user that runs `docker compose`. A `umask 077` in the operator's shell
+profile makes this automatic for any new files.
+
+For a production deployment, replace `.env` file storage with a managed
+secrets store (AWS Secrets Manager, HashiCorp Vault, Doppler, etc.) and
+inject values via env vars at container start. The connector itself
+doesn't care where the env comes from — only that it's set. Rotate
+secrets per the policy in the "Key rotation" section above.
+
 ## Rate limiting
 
 Every state-changing POST/PUT is rate-limited per ``(endpoint, user_id)``

@@ -81,9 +81,12 @@ A typical happy path:
 3. `reflow_bridge_worker` polls `GET /api/v1/documents/{job_id}` every
    `REFLOW_POLL_SECONDS`. On `status=awaiting_approval` (Reflow flagged PII),
    marks the canvas job `awaiting_approval` and waits.
-4. Faculty hits the Panorama overlay, sees the PII gate, reads findings,
-   approves or denies. The handler calls
-   `ReflowClient.submit_pii_decision()` → `POST /api/v1/documents/{id}/pii/{approve,deny}`.
+4. Faculty hits the Panorama overlay (or the LTI tool's queue), sees the
+   PII gate, reads findings, approves or denies. The handler calls
+   `ReflowClient.submit_pii_decision()` which: GETs the doc status to read
+   the current `approval_token`, then POSTs to
+   `/api/v1/approval/{token}/decision`. See
+   [REFLOW_API.md](REFLOW_API.md) for the exact contract.
 5. On `status=completed`, the bridge fetches `markdown_url` (presigned S3),
    rewrites figure refs to permanent Canvas file URLs, sanitises HTML,
    creates/updates the Canvas Page, advances the canvas job to
@@ -116,6 +119,72 @@ Important suffixes:
 | `lti:course:{course_id}:owner` | Whose OAuth token authorises scans of the course |
 | `canvas:user_oauth:*` | Per-instructor OAuth access + refresh tokens |
 | `canvas:audit:*` | Append-only approval/decision audit log |
+
+## Alt-format pipeline
+
+The canonical accessible representation is the HTML body produced by
+`canvas/markdown_to_html.render` from Reflow's markdown. Every other
+alt-format derives from that same RenderedPage:
+
+- **HTML / HTML with math** — `alt_formats.html_full_document`. Auto-
+  detects LaTeX delimiters and `\ce{}`/`\pu{}` mhchem markup via
+  `alt_formats.has_math_content`; on a hit, the rendered page loads
+  MathJax with the mhchem extension. Inline-`$...$` regex is tightened
+  so `$5 and another $7` prose doesn't trigger MathJax.
+- **Plain text / Markdown** — tag-strip and passthrough.
+- **ePub** — `ebooklib` (EPUB3).
+- **Searchable PDF (auto-route)** —
+  `canvas/alt_formats.pdf_has_text_layer` decides. Image-only scans
+  go through `ocrmypdf`. Born-digital PDFs go through WeasyPrint with
+  `pdf_variant='pdf/ua-1'` for a real Tagged PDF (structure tree,
+  reading order, alt text). Math in the source HTML is pre-rendered
+  to inline SVG via `canvas/math_render` because WeasyPrint doesn't
+  run JavaScript.
+- **Audio MP3** — Amazon Polly neural TTS, chunked at ~2800 chars per
+  Polly call.
+- **Translate** — Anthropic Claude (Sonnet 4.5) via the Messages API.
+  Prompt explicitly preserves LaTeX and `\ce{}` markup verbatim so
+  equations don't get translated into the target language's prose.
+- **Braille (BRF)** — liblouis. Math-bearing documents route to
+  Nemeth code (`nemeth.ctb`); prose to `en-us-g2.ctb`. Strips LaTeX
+  delimiters before handoff so Nemeth transcribes the symbols, not the
+  fences.
+
+`canvas/pdf_figures.py` and the `/canvas/panorama/alt/{job}/figures/{ref}`
+route give every rendered surface clean figure bytes pulled from the
+source PDF (PyMuPDF embedded-raster extraction). Reflow's S3 PNGs
+(which carry a vision-pipeline grid overlay) are the last-resort
+fallback for vector figures the connector can't extract directly.
+
+## Security model
+
+State-changing requests need to clear, in order:
+
+1. **LTI session cookie** (`reflow_lti_session`) — set by `/lti/launch`,
+   carries the user id, course id, and roles.
+2. **CSRF token** (`X-CSRF-Token` header, fetched via
+   `/canvas/panorama/csrf`) — HMAC over the session id with
+   `CSRF_SECRET_KEY`.
+3. **Trusted-origin gate** — request's Origin (or Referer base) must be
+   in `CANVAS_ALLOWED_ORIGINS` or match `CANVAS_ALLOWED_ORIGIN_REGEX`.
+4. **Rate limit** — per `(endpoint, user_id)`. Redis-backed fixed
+   window. See [OPERATIONS.md](../OPERATIONS.md#rate-limiting) for the
+   table.
+5. **Role check** — Instructor / TA / ContentDeveloper / Admin for
+   approve/reject/edit/PII paths.
+6. **Course check** — the LTI session's `course_id` must match the
+   job's `canvas_course_id`.
+
+Instructor OAuth tokens are encrypted at rest with AES-GCM
+(`canvas/privacy.py`). The encryption key derives from
+`TOKEN_ENCRYPTION_KEY`; if unset it falls back to a derivation of
+`CSRF_SECRET_KEY`; if both are unset, a hardcoded constant — the
+connector logs `CRITICAL` once per process in that mode, plus a
+boot-time audit line. Production deployments set both keys.
+
+The publication gate (`REQUIRE_WCAG_GATE=true`) makes WCAG-error
+findings and the 4-item reviewer checklist a hard prerequisite for
+the approve handler. When off, both run but failures are advisory.
 
 ## Multi-tenant model
 
@@ -183,12 +252,42 @@ connector/
 │   ├── canvas_panorama.py  # Overlay JSON, dial badges, alt-formats, PII gate
 │   ├── canvas_review.py    # Faculty review queue + per-doc page
 │   └── _pii_approval_page.py  # HTML renderer for PII approval gate
+├── canvas/
+│   ├── pdf_figures.py      # Extract clean figure rasters from source PDF
+│   ├── math_render.py      # LaTeX / mhchem → inline SVG for Tagged PDF
+│   ├── verapdf_audit.py    # PDF/UA-1 audit subprocess wrapper
+│   └── …                   # (other modules listed earlier in this file)
+├── utils/
+│   ├── rate_limit.py       # Redis-backed per-(endpoint, user) limiter
+│   └── retry_helpers.py    # Exponential backoff for upstream calls
+├── tools/                  # Operator CLIs (python -m connector.tools.*)
+│   ├── generate_keys.py    # TOKEN_ENCRYPTION_KEY + CSRF_SECRET_KEY mint
+│   ├── reprocess_figures.py # Backfill PDF-extracted figures for old jobs
+│   └── …
 ├── workers/
 │   ├── canvas_watcher.py   # Course poll + Reflow submission
 │   └── reflow_bridge_worker.py  # Reflow status poll + Canvas Page write
 └── web/canvas_review/
-    ├── panorama.js         # Theme-Editor overlay bundle
+    ├── panorama.js         # Theme-Editor overlay bundle (dial, modal, gate UI)
     ├── dashboard.html      # Instructor dashboard template
     ├── index.html          # Review queue template
-    └── one.html            # Per-document review template
+    └── one.html            # Per-document review template (side-by-side)
 ```
+
+## Tests
+
+```
+tests/
+├── unit/           Pure-logic tests (markdown rendering, math detection,
+│                   PDF figure matching, rate-limit math, structure-tree
+│                   walking, PDF text-layer detection, ...)
+└── integration/    End-to-end with fakeredis + real FastAPI app +
+                    real LTI session + CSRF + rate-limit plumbing. Outbound
+                    HTTP (Reflow Core, Canvas) mocked with respx.
+```
+
+The integration suite specifically covers the wire contract for the
+PII decision flow and the approve-and-publish flow — both broke
+multiple times during the CSU East Bay pilot at boundaries the unit
+suite couldn't see (wrong upstream URLs, missing CSRF token, missing
+trusted-origin headers).

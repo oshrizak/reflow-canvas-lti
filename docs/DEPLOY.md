@@ -49,9 +49,29 @@ CANVAS_OAUTH_CLIENT_ID=...
 CANVAS_OAUTH_CLIENT_SECRET=<from secret manager>
 CANVAS_ALLOWED_ORIGINS=https://canvas.instructure.com
 
+# Production-required security keys — generate with
+#   docker compose run --rm connector python -m connector.tools.generate_keys
+TOKEN_ENCRYPTION_KEY=<from secret manager>
+CSRF_SECRET_KEY=<from secret manager>
+
+# Production-recommended: enforce the WCAG publication gate
+REQUIRE_WCAG_GATE=true
+
 REDIS_URL=redis://<host>:6379/0
 LOG_LEVEL=INFO
 ENVIRONMENT=production
+```
+
+Optional, only when the matching alt-format is enabled:
+
+```
+# Audio (MP3) — Amazon Polly
+AWS_DEFAULT_REGION=us-east-1
+AWS_ACCESS_KEY_ID=...
+AWS_SECRET_ACCESS_KEY=<from secret manager>
+
+# Translate — Anthropic Claude
+ANTHROPIC_API_KEY=<from secret manager>
 ```
 
 For multi-tenant deployments, also set:
@@ -67,6 +87,28 @@ CANVAS_TENANT=<short slug, e.g. "csueb" or "uchicago">
   volume. Never bake it into the image.
 - `REFLOW_API_KEY`, `CANVAS_OAUTH_CLIENT_SECRET`, `CANVAS_API_TOKEN` (if
   used) — pull from your secret manager into env at runtime.
+- `TOKEN_ENCRYPTION_KEY`, `CSRF_SECRET_KEY` — same pattern. Required for
+  production. The connector logs `CRITICAL` per missing key at startup
+  via its boot-time secrets audit; grep `startup secrets audit:` after
+  every deploy to verify cleanliness. See
+  [`OPERATIONS.md`](../OPERATIONS.md#secrets-checklist-before-first-launch)
+  for the full checklist and key-rotation procedure.
+
+## Persistence + backups
+
+`docker-compose.yml` runs Redis with AOF + RDB persistence on a named
+volume (`redis-data`). The volume survives `docker compose down`;
+`docker compose down -v` wipes it.
+
+Schedule the bundled backup script from host cron for off-host
+durability:
+
+```
+0 */6 * * * cd /path/to/reflow-canvas-lti && BACKUP_S3_BUCKET=s3://… ./scripts/backup-redis.sh
+```
+
+See [`OPERATIONS.md`](../OPERATIONS.md#redis-persistence--backups) for
+the full backup/restore procedure.
 
 ## Network
 

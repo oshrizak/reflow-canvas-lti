@@ -1,5 +1,17 @@
 # reflow-canvas-lti Porting Brief
 
+> **Historical document.** This is the original migration plan from
+> `equalify-reflow` → `reflow-canvas-lti`. The migration is **complete**:
+> every "after push" follow-up listed below either landed in this repo or
+> was resolved differently. Kept as the historical record of intent — for
+> the current state of the connector see [`README.md`](README.md),
+> [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md), and
+> [`CHANGELOG.md`](CHANGELOG.md). Specifically: the PII approve/deny
+> follow-up never needed an upstream Core PR — Core's PII gate uses the
+> approval-token endpoint (`POST /api/v1/approval/{token}/decision`),
+> which the connector now calls correctly. See
+> [`docs/REFLOW_API.md`](docs/REFLOW_API.md).
+
 **Goal:** Extract the working Canvas LTI integration out of the `equalify-reflow` fork and into a standalone connector service (`reflow-canvas-lti`) that consumes the upstream Reflow HTTP API. Mirror the architectural pattern of `equalify-reflow-wp`.
 
 **Source of truth:** `C:\Users\hq1500\Desktop\equalify-reflow-main` — this is the fork that just successfully converted SPRITE Chimera, Audre Lorde Cancer Journals, and RFC 791 end-to-end against live Canvas at CSUEB on 2026-06-17. Use it as the canonical implementation; do NOT pull from older scaffolding at `Desktop\Reflow Canvas API`.

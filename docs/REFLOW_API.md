@@ -57,28 +57,64 @@ hostname for `S3_INTERNAL_URL` when set — needed when the connector and the
 S3 service are both inside Docker but the presigned URL was issued against
 the public hostname.
 
-### POST `/api/v1/documents/{job_id}/pii/approve` *(pending upstream)*
-### POST `/api/v1/documents/{job_id}/pii/deny` *(pending upstream)*
+### POST `/api/v1/approval/{approval_token}/decision`
 
-Record a faculty decision on flagged PII. **These endpoints are pending in
-upstream Reflow Core** — the connector calls them via
-`ReflowClient.submit_pii_decision()`; today they return 404. See the
-"Known follow-ups" section of [CHANGELOG.md](../CHANGELOG.md).
+Record a faculty decision on flagged PII.
 
-**Request** — JSON: `{"justification": "<str ≥ 10 chars>", "reviewed_by": "<user_id_or_email>"}`.
+Reflow Core's PII gate is approval-token-based. When `GET /api/v1/documents/{id}`
+reports `status=awaiting_approval`, the response also carries an
+`approval_token` (single-use, time-limited) and a ready-to-POST
+`approval_url`. The connector reads the token off the status payload
+and POSTs to the approval route — it does NOT manufacture a per-job URL.
 
-**Response** — the post-transition status payload.
+Earlier connector versions targeted a hypothetical
+`/api/v1/documents/{id}/pii/{approve,deny}` route; Core never had it.
+That was resolved in this connector — see the "Fixed" section of
+[CHANGELOG.md](../CHANGELOG.md) for the bug history.
+
+**Status fetch** — `GET /api/v1/documents/{job_id}` returns:
+
+```jsonc
+{
+  "job_id": "<uuid>",
+  "status": "awaiting_approval",
+  "approval_token": "<base64-ish>",
+  "approval_url": "/api/v1/approval/<token>/decision",
+  "pii_findings": [
+    { "entity_type": "EMAIL_ADDRESS", "score": 0.95, ... }
+  ]
+}
+```
+
+**Decision request** — JSON to the URL above:
+
+```jsonc
+{
+  "decision": "approved" | "denied",
+  "justification": "<str ≥ 10 chars>",
+  "reviewed_by": "<user_id_or_email>"
+}
+```
+
+**Response** — Reflow Core's post-transition status payload (e.g. status
+moves to `processing`).
 
 **Error contract:**
-- 404 → connector raises `ReflowApiError(status_code=404)` with a message that
-  points operators at the upstream PR.
-- 409 → connector raises `ReflowApiError(status_code=409)` and the panorama
-  handler returns 409 to the UI ("job already advanced past awaiting_approval —
-  another instructor decided in parallel").
+
+- 404 → token already redeemed / expired / never paused. Connector
+  raises `ReflowApiError(status_code=404)`; handler surfaces 502 to the UI.
+- 409 → the job moved past `awaiting_approval` between status fetch and
+  decision POST (typical: another instructor approved in a parallel tab).
+  Connector raises `ReflowApiError(status_code=409)`; handler returns 409
+  to the UI, which renders the green "Already cleared" banner instead of
+  a failure.
 - Other 4xx/5xx → 502 with the upstream message.
 
 Called by:
-- `connector/api/canvas_panorama.py::pii_decision` — the faculty PII gate.
+- `connector/api/canvas_panorama.py::pii_decision` — the faculty PII gate
+  in the panorama overlay's modal.
+- `connector/api/canvas_review.py::review_pii` — the PII gate page in the
+  LTI tool's queue.
 
 ## Auth model
 

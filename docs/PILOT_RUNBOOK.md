@@ -68,12 +68,40 @@ rewrites the host before fetching.
 This is the 2026-06-17 bug from the source fork — the field was missing
 from Settings entirely. The connector ships it; just set it.
 
-### Faculty PII decision returns 502 with "Reflow Core did not expose POST /api/v1/documents/.../pii/..."
+### Faculty PII decision returns 502
 
-Reflow Core hasn't yet shipped the PII approve/deny endpoints. Track the
-upstream PR (`PORTING_BRIEF.md` "After push: small Core Reflow PRs"). Until
-then, faculty PII gates need to be resolved directly in Reflow Core's own
-UI (the pipeline viewer page).
+Two distinct causes:
+
+* **Bridge can't reach Reflow Core at all.** The connector logs the
+  underlying network/HTTP error. Check `REFLOW_API_BASE_URL` and the
+  pre-flight curl above.
+* **Approval token race.** If another instructor approved in a parallel
+  tab, Reflow Core moves the job past `awaiting_approval` and the
+  connector surfaces 409 to the UI — not a 502. The panorama overlay
+  renders this as a green "Already cleared" banner, which is correct.
+
+The historical "endpoint not yet upstream" mode is fixed; the
+connector now uses Reflow Core's approval-token endpoint
+(`POST /api/v1/approval/{token}/decision`). See
+[REFLOW_API.md](REFLOW_API.md) for the contract.
+
+### "Unexpected deployment_id" on every launch
+
+You re-registered the LTI tool in Canvas. `LTI_DEPLOYMENT_ID` in `.env`
+no longer matches what Canvas is sending. Either set it to the new
+deployment value (read it from Canvas's tool placement) and migrate
+the per-platform Redis records to the recomputed `platform_id`, or
+revert to the old deployment in Canvas if still available. See
+`OPERATIONS.md` "Common breakage modes" for the migration outline.
+
+### `invalid_scope` on every Canvas write
+
+The Canvas Developer Key is missing scopes the bridge needs (page
+create/update, file upload, conversations). Add the four `url:POST|...`
+/ `url:PUT|...` scopes in the Canvas API key (not the LTI key), then
+force faculty to re-consent — stored OAuth tokens only carry the
+scopes the key had at consent time. Wipe `eq-pdf:lti:user-token:*` to
+force the consent screen on next launch.
 
 ### `/canvas/panorama/...` returns 401 "No LTI session"
 
@@ -133,4 +161,26 @@ created. To roll back a pilot:
 3. Disable the LTI tool in Canvas (Developer Keys → toggle OFF).
 
 Redis-stored Canvas job state can be retained for audit (default
-`CANVAS_JOB_RETENTION_DAYS=90`).
+`CANVAS_JOB_RETENTION_SECONDS=7776000`, i.e. 90 days). Approval audit
+records have their own retention (`CANVAS_AUDIT_RETENTION_SECONDS`,
+default 5 years).
+
+## Before the first faculty launch — checklist
+
+1. [`OPERATIONS.md`](../OPERATIONS.md#secrets-checklist-before-first-launch)
+   — secrets, including `TOKEN_ENCRYPTION_KEY` and `CSRF_SECRET_KEY`.
+   Generate with `docker compose run --rm connector python -m connector.tools.generate_keys`.
+2. Watch the connector boot logs for `startup secrets audit: OK`. Any
+   `CRITICAL` line means a required secret is still missing.
+3. Schedule the Redis backup: cron entry calling
+   `./scripts/backup-redis.sh` every 6 hours, with `BACKUP_S3_BUCKET`
+   set if you want off-host durability. See
+   [`OPERATIONS.md`](../OPERATIONS.md#redis-persistence--backups).
+4. Decide on `REQUIRE_WCAG_GATE`. Off for the first few days of a
+   pilot so faculty can move; flip to `true` once they're comfortable
+   with the modal flow (the panorama overlay handles the 409 path
+   natively — see the WCAG-gate UI section in the changelog).
+5. Verify rate-limit thresholds suit the pilot's expected load —
+   defaults are generous for typical faculty workflows but a bulk
+   migration day might want a temporary bump. See
+   [`OPERATIONS.md`](../OPERATIONS.md#rate-limiting).
