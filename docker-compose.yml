@@ -38,8 +38,35 @@ services:
     # No host port binding — the connector reaches redis via the compose
     # network at ``redis:6379``. Avoids colliding with other Redis containers
     # an operator may already have on 6379.
+    #
+    # Persistence: AOF (every write fsync'd ~1s) + RDB snapshots (default
+    # save points). Without these, a container restart wipes every
+    # CanvasJob, instructor OAuth token, approval audit log entry, and
+    # pending-review set — i.e. all faculty consent and accessibility
+    # decisions ever made. Mount the data dir to a named volume so the
+    # AOF/RDB files survive container lifecycle.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --appendfsync
+      - everysec
+      - --save
+      - "900 1"
+      - --save
+      - "300 10"
+      - --save
+      - "60 10000"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
+
+volumes:
+  # Redis AOF + RDB files. Survive ``docker compose down`` and image
+  # rebuilds. ``docker compose down -v`` is required to wipe.
+  redis-data:
