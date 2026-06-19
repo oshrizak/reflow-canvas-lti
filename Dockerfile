@@ -10,7 +10,41 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         qpdf \
         unpaper \
         curl \
+        openjdk-17-jre-headless \
+        wget \
+        unzip \
     && rm -rf /var/lib/apt/lists/*
+
+# Install VeraPDF — the official PDF/UA-1 (WCAG-mapped) accessibility
+# validator. We call it as a subprocess from
+# ``connector.canvas.verapdf_audit`` to produce real per-criterion
+# pass/fail data instead of the rough source-score heuristic. Installs
+# under /opt/verapdf/verapdf with launcher script linked into /usr/local/bin.
+ARG VERAPDF_VERSION=1.27.32
+RUN cd /tmp \
+ && wget -q "https://software.verapdf.org/releases/${VERAPDF_VERSION}/verapdf-installer.zip" -O verapdf-installer.zip \
+ && unzip -q verapdf-installer.zip \
+ && cd verapdf-greenfield-* \
+ && printf '%s\n' \
+        '<?xml version="1.0" encoding="UTF-8" standalone="no"?>' \
+        '<AutomatedInstallation langpack="eng">' \
+        '  <com.izforge.izpack.panels.htmlhello.HTMLHelloPanel id="welcome"/>' \
+        '  <com.izforge.izpack.panels.target.TargetPanel id="install_dir">' \
+        '    <installpath>/opt/verapdf</installpath>' \
+        '  </com.izforge.izpack.panels.target.TargetPanel>' \
+        '  <com.izforge.izpack.panels.packs.PacksPanel id="sdk_pack_select">' \
+        '    <pack index="0" name="veraPDF GUI" selected="true"/>' \
+        '    <pack index="1" name="veraPDF Mac Validation Profiles" selected="false"/>' \
+        '    <pack index="2" name="veraPDF Documentation" selected="false"/>' \
+        '    <pack index="3" name="veraPDF Sample Plugins" selected="false"/>' \
+        '  </com.izforge.izpack.panels.packs.PacksPanel>' \
+        '  <com.izforge.izpack.panels.install.InstallPanel id="install"/>' \
+        '  <com.izforge.izpack.panels.process.ProcessPanel id="process"/>' \
+        '  <com.izforge.izpack.panels.finish.FinishPanel id="finish"/>' \
+        '</AutomatedInstallation>' > auto-install.xml \
+ && java -jar verapdf-izpack-installer-*.jar auto-install.xml \
+ && ln -s /opt/verapdf/verapdf /usr/local/bin/verapdf \
+ && cd / && rm -rf /tmp/verapdf-installer.zip /tmp/verapdf-greenfield-*
 
 WORKDIR /app
 
