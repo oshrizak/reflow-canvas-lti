@@ -68,6 +68,9 @@ dev = [
     "ruff>=0.8.0",
     "types-redis>=4.6.0",
     "testcontainers[redis]>=4.8.0",
+    # In-memory Redis stand-in for integration tests so we don't pay
+    # the testcontainers Docker boot cost on every run.
+    "fakeredis>=2.20.0",
 ]
 
 [project.urls]
