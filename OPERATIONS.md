@@ -115,6 +115,42 @@ not host failures.
    successful restore.
 4. Bring the connector back up: `docker compose up -d connector`.
 
+## Rate limiting
+
+Every state-changing POST/PUT is rate-limited per ``(endpoint, user_id)``
+via a Redis-backed fixed-window counter. The limits are picked well
+above legitimate faculty workflow but well below abuse:
+
+| Endpoint | Bucket | Limit | Window |
+|---|---|---|---|
+| ``POST /canvas/panorama/approve/{job}`` | ``approve`` | 30 | 60s |
+| ``POST /canvas/panorama/reject/{job}`` | ``reject`` | 30 | 60s |
+| ``POST /canvas/panorama/request-edits/{job}`` | ``request_edits`` | 30 | 60s |
+| ``POST /canvas/panorama/unpublish/{job}`` | ``unpublish`` | 30 | 60s |
+| ``POST /canvas/panorama/pii-decision/{job}`` | ``pii_decision`` | 10 | 60s |
+| ``POST /canvas/panorama/convert/{file}`` | ``convert`` | 30 | 60s |
+| ``POST /canvas/panorama/approve/_bulk`` | ``approve_bulk`` | 5 | 60s |
+| ``PUT  /canvas/panorama/edit/{job}`` | ``edit`` | 60 | 60s |
+| ``POST /canvas/review/{job}/approve`` | ``review_approve`` | 30 | 60s |
+| ``POST /canvas/review/{job}/reject`` | ``review_reject`` | 30 | 60s |
+
+When the limit is exceeded the response is **429 Too Many Requests**
+with a ``Retry-After`` header set to the seconds until the next window
+opens. The limiter logs a ``WARNING`` line every time it fires:
+
+```
+rate limit exceeded: bucket=approve actor=<user_id> count=31 limit=30 window=60s
+```
+
+Counters live at ``eq-pdf:rl:<bucket>:<actor>:<window_id>`` and
+auto-expire 5 seconds after the window closes, so the namespace stays
+tidy without a sweeper.
+
+To raise a specific limit (e.g. course migration day with bulk
+approvals), grep the relevant ``enforce_rate_limit`` call in
+``connector/api/canvas_panorama.py`` or ``canvas_review.py`` and bump
+the ``limit=`` value, then ``docker compose restart connector``.
+
 ## Common breakage modes (from CSUEB pilot)
 
 ### "Unexpected deployment_id" at every launch

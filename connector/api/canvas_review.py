@@ -24,6 +24,7 @@ from ..canvas.state import get_job, list_pending, put_job
 from ..dependencies import get_redis_client
 from ..lti.routes import SESSION_COOKIE
 from ..lti.session import SessionPayload, get_session
+from ..utils.rate_limit import enforce_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -307,6 +308,7 @@ async def approve(
     job = await get_job(redis, job_id)
     if job is None or job.canvas_course_id != session.course_id:
         raise HTTPException(status_code=404, detail="Unknown job")
+    await enforce_rate_limit(redis, bucket="review_approve", actor=session.user_id, limit=30, window_seconds=60)
 
     # When the API token lacks manage_wiki, the bridge worker skips Canvas
     # Page creation and leaves canvas_page_url empty. Approval is still
@@ -355,6 +357,7 @@ async def reject(
     job = await get_job(redis, job_id)
     if job is None or job.canvas_course_id != session.course_id:
         raise HTTPException(status_code=404, detail="Unknown job")
+    await enforce_rate_limit(redis, bucket="review_reject", actor=session.user_id, limit=30, window_seconds=60)
 
     if job.canvas_page_url:
         from ..workers.reflow_bridge_worker import _canvas_client_for_job

@@ -33,6 +33,7 @@ from ..canvas.panorama import (
 )
 from ..canvas.reflow_client import ReflowClient
 from ..canvas.sanitize import sanitize_html
+from ..utils.rate_limit import enforce_rate_limit
 from ..canvas.state import (
     append_approval_event,
     clear_edited_html,
@@ -293,6 +294,7 @@ async def put_edit(
     _job, _sess = await _require_instructor(redis, session_id, job_id)
     _require_csrf(session_id, csrf_token)
     _require_trusted_origin(request)
+    await enforce_rate_limit(redis, bucket="edit", actor=_sess.user_id, limit=60, window_seconds=60)
 
     html = (body or {}).get("html")
     if not isinstance(html, str) or not html.strip():
@@ -1296,6 +1298,7 @@ async def pii_decision(
     job, sess = await _require_instructor(redis, session_id, job_id)
     _require_csrf(session_id, csrf_token)
     _require_trusted_origin(request)
+    await enforce_rate_limit(redis, bucket="pii_decision", actor=sess.user_id, limit=10, window_seconds=60)
 
     # Forward the decision to upstream Reflow Core over HTTP. The connector
     # used to call services.approval_service.ApprovalService directly when
@@ -1393,6 +1396,7 @@ async def convert_file(
         raise HTTPException(status_code=403, detail="Session not bound to this course")
     _require_csrf(session_id, csrf_token)
     _require_trusted_origin(request)
+    await enforce_rate_limit(redis, bucket="convert", actor=sess.user_id, limit=30, window_seconds=60)
 
     # Prefer (re)building the page from an EXISTING completed conversion. These
     # files usually already have a Reflow job (they show a score) — they just
@@ -1452,6 +1456,7 @@ async def approve_job(
     job, sess = await _require_instructor(redis, session_id, job_id)
     _require_csrf(session_id, csrf_token)
     _require_trusted_origin(request)
+    await enforce_rate_limit(redis, bucket="approve", actor=sess.user_id, limit=30, window_seconds=60)
     if job.status == "failed":
         raise HTTPException(status_code=409, detail="Cannot approve a failed job")
 
@@ -1558,6 +1563,7 @@ async def reject_job(
     job, sess = await _require_instructor(redis, session_id, job_id)
     _require_csrf(session_id, csrf_token)
     _require_trusted_origin(request)
+    await enforce_rate_limit(redis, bucket="reject", actor=sess.user_id, limit=30, window_seconds=60)
     job.status = "rejected"
     await put_job(redis, job)
     await append_approval_event(
@@ -1589,6 +1595,7 @@ async def request_edits(
     job, sess = await _require_instructor(redis, session_id, job_id)
     _require_csrf(session_id, csrf_token)
     _require_trusted_origin(request)
+    await enforce_rate_limit(redis, bucket="request_edits", actor=sess.user_id, limit=30, window_seconds=60)
     job.status = "awaiting_review"
     await put_job(redis, job)
     await append_approval_event(
@@ -1626,6 +1633,7 @@ async def unpublish_job(
     job, sess = await _require_instructor(redis, session_id, job_id)
     _require_csrf(session_id, csrf_token)
     _require_trusted_origin(request)
+    await enforce_rate_limit(redis, bucket="unpublish", actor=sess.user_id, limit=30, window_seconds=60)
 
     job.status = "awaiting_review"
     await put_job(redis, job)
@@ -1717,6 +1725,17 @@ async def approve_bulk(
     """
     _require_csrf(session_id, csrf_token)
     _require_trusted_origin(request)
+    # Resolve the session early so the rate-limit actor is the user id,
+    # not just the opaque session cookie. ``_require_instructor`` runs
+    # per-job below for the actual course check.
+    _bulk_sess = await get_session(redis, session_id) if session_id else None
+    await enforce_rate_limit(
+        redis,
+        bucket="approve_bulk",
+        actor=_bulk_sess.user_id if _bulk_sess else (session_id or ""),
+        limit=5,
+        window_seconds=60,
+    )
     if not body.job_ids:
         raise HTTPException(status_code=400, detail="job_ids must be non-empty")
     if len(body.job_ids) > 200:
