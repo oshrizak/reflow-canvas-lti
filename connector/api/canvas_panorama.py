@@ -367,13 +367,29 @@ async def alt_format(
     #   "awaiting_review"  — faculty needs to approve before students can see
     #   "published"        — approved, all alt formats live
     #   "rejected" | "failed" — terminal, never expose to students
+    # The draft gate stays in force. We don't *bypass* it for instructors
+    # — we recognize the instructor role as a legitimate authorization to
+    # see drafts of their own course, the same authority the review screen
+    # already trusts. Students never qualify: even with a valid LTI
+    # session, the role check below excludes them.
     has_instructor_session = False
     if session_id and job.status != "published":
         try:
             session = await get_session(redis, session_id)
         except Exception:  # noqa: BLE001
             session = None
-        if session is not None and session.course_id == job.canvas_course_id:
+        if (
+            session is not None
+            and session.course_id == job.canvas_course_id
+            and any(
+                r.endswith("Instructor")
+                or r.endswith("Teacher")
+                or "TeachingAssistant" in r
+                or "ContentDeveloper" in r
+                or r.endswith("Administrator")
+                for r in (session.roles or [])
+            )
+        ):
             has_instructor_session = True
     if job.status != "published" and not preview and not has_instructor_session:
         msg = {
