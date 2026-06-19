@@ -48,3 +48,6 @@ logs/
 # Per-developer local tool settings
 .claude/settings.local.json
 
+# Redis backups (operator artefacts — never commit, can be large)
+backups/
+

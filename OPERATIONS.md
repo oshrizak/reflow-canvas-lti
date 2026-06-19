@@ -91,19 +91,46 @@ without a verified backup.
 
 ### Backup
 
-Manual point-in-time snapshot:
+Automated via the bundled script — schedule it on the host:
+
+```bash
+./scripts/backup-redis.sh
+```
+
+The script triggers a fresh `BGSAVE`, polls `LASTSAVE` until the
+snapshot lands, `docker cp`s the new `dump.rdb` into `./backups/`
+with a UTC timestamp in the filename, and prunes anything in that
+directory older than `BACKUP_RETENTION_DAYS` (default 14).
+
+For real off-host durability set `BACKUP_S3_BUCKET` in the
+environment and have the AWS CLI on PATH with credentials:
+
+```bash
+export BACKUP_S3_BUCKET=s3://my-bucket/reflow-redis
+./scripts/backup-redis.sh
+```
+
+Cron entry (every 6 hours, ample for the connector's write rate):
+
+```cron
+0 */6 * * * cd /path/to/reflow-canvas-lti && ./scripts/backup-redis.sh >> backups/backup.log 2>&1
+```
+
+Or as a systemd timer if you prefer a structured unit. Pair the S3
+bucket with a 30-day lifecycle policy → Glacier transition so long-
+term cost stays bounded.
+
+The `redis-data` named volume on its own only survives container
+restarts, not host failures — never skip the off-host upload in
+production.
+
+Manual one-shot (without the script) if you need to investigate:
 
 ```bash
 docker compose exec redis redis-cli BGSAVE
 # Wait for "Background saving terminated with success" in `docker compose logs redis`
 docker cp $(docker compose ps -q redis):/data/dump.rdb ./backups/redis-$(date +%Y%m%dT%H%M%S).rdb
-docker cp $(docker compose ps -q redis):/data/appendonlydir ./backups/appendonlydir-$(date +%Y%m%dT%H%M%S)
 ```
-
-Production should automate this via cron or a sidecar to an offsite
-target (S3 bucket with versioning + lifecycle policy). The
-`redis-data` named volume on its own only survives container restarts,
-not host failures.
 
 ### Restore
 
