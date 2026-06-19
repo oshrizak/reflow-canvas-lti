@@ -33,7 +33,6 @@ from ..canvas.panorama import (
 )
 from ..canvas.reflow_client import ReflowClient
 from ..canvas.sanitize import sanitize_html
-from ..utils.rate_limit import enforce_rate_limit
 from ..canvas.state import (
     append_approval_event,
     clear_edited_html,
@@ -50,6 +49,7 @@ from ..config import settings
 from ..dependencies import get_redis_client
 from ..lti.routes import SESSION_COOKIE
 from ..lti.session import get_session
+from ..utils.rate_limit import enforce_rate_limit
 
 logger = logging.getLogger(__name__)
 

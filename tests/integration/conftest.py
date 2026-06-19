@@ -21,10 +21,9 @@ from collections.abc import AsyncIterator, Iterator
 import fakeredis.aioredis
 import pytest
 import pytest_asyncio
-from starlette.testclient import TestClient
-
 from connector.dependencies import get_redis_client
 from connector.lti.session import SessionPayload, new_session_id, put_session
+from starlette.testclient import TestClient
 
 
 @pytest_asyncio.fixture
