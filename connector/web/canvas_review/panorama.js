@@ -2033,8 +2033,76 @@
       }
     }
 
+    // Small dial-shaped marker for files the watcher hasn't seen yet.
+    // Reflow's watcher polls every ~60s; this surfaces that wait so
+    // faculty doesn't refresh repeatedly thinking we missed the file.
+    // Same actions-cell placement as the real dial for visual
+    // consistency.
+    function makePendingMarker(filename) {
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "reflow-pn-dial reflow-pn-pending";
+      btn.setAttribute("aria-label",
+        "Awaiting accessibility scan for " + filename +
+        ". Reflow checks new uploads about once a minute."
+      );
+      btn.title =
+        "Awaiting accessibility scan — Reflow processes new uploads " +
+        "automatically (about once a minute). Refresh in a few minutes " +
+        "to see results.";
+      btn.style.cssText =
+        "background:#fff7e6;border:1px solid #cc7a00;color:#6b3a00;" +
+        "border-radius:999px;width:52px;height:52px;padding:0;" +
+        "display:inline-flex;align-items:center;justify-content:center;" +
+        "font-size:18px;cursor:default;";
+      btn.innerHTML = '<span aria-hidden="true">⧗</span>';  // hourglass
+      // The marker is informational, not interactive — keep clicks
+      // from bubbling to the row's row-click handler (which would
+      // open the file preview).
+      btn.addEventListener("click", function (e) { e.stopPropagation(); e.preventDefault(); });
+      return btn;
+    }
+
+    function attachPendingMarker(entry) {
+      var marker = makePendingMarker(entry.filename);
+      var wrap = document.createElement("span");
+      wrap.appendChild(marker);
+      var actionsCell = entry.row.querySelector('[data-testid="table-cell-actions"]');
+      if (actionsCell) {
+        wrap.className = "reflow-pn-wrap reflow-pn-actions";
+        try {
+          if (getComputedStyle(actionsCell).position === "static") {
+            actionsCell.style.position = "relative";
+          }
+          actionsCell.style.overflow = "visible";
+        } catch (e) { /* defensive */ }
+        actionsCell.appendChild(wrap);
+        return;
+      }
+      var cell = findPositioningCell(entry.filenameSpan || entry.row, entry.row);
+      if (cell) {
+        wrap.className = "reflow-pn-wrap reflow-pn-cell";
+        try {
+          if (getComputedStyle(cell).position === "static") {
+            cell.style.position = "relative";
+          }
+        } catch (e) { /* defensive */ }
+        cell.appendChild(wrap);
+      }
+    }
+
     rows.forEach(function (entry) {
       var payload = byName[entry.filename];
+      // No payload AND the user is an instructor: this is a new file
+      // the watcher hasn't picked up yet, or one not yet submitted to
+      // Reflow. Mark it as "Pending scan" so faculty doesn't think
+      // we're ignoring it. Students see nothing in this state — there
+      // are no formats for them to act on yet.
+      if (!payload && STATE.userRole === "Instructor") {
+        entry.row.dataset.reflowDecorated = "1";
+        attachPendingMarker(entry);
+        return;
+      }
       if (!payload) return;
       entry.row.dataset.reflowDecorated = "1";
       if (!shouldDecorate(payload)) return;
