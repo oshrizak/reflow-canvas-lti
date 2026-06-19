@@ -337,6 +337,81 @@ async def delete_edit(
     return JSONResponse({"job_id": job_id, "edited": False})
 
 
+# ---- Figure proxy -------------------------------------------------------
+#
+# When the bridge fails to upload figures into the course Files folder
+# (typically: the instructor's OAuth token is missing
+# ``url:POST|/api/v1/courses/:course_id/files``), ``figure_canvas_urls``
+# stays empty, the markdown's relative ``figures/<id>`` refs are not
+# rewritten, and the rendered accessible HTML emits broken
+# ``<img src="figures/<id>">`` tags that 404 against the alt route.
+#
+# This proxy is the fallback. It resolves a figure id back through
+# Reflow's status response (which always carries the S3 presigned URL),
+# fetches the bytes server-side, and streams them under the alt route
+# at the exact path the rendered HTML already requests. Same-origin,
+# robust to bridge-side failures, and degrades gracefully on top of
+# the existing Canvas-Files-as-source-of-truth design.
+
+@router.get("/alt/{job_id}/figures/{figure_ref:path}")
+async def alt_figure_proxy(
+    job_id: str,
+    figure_ref: str,
+    redis: Redis = Depends(get_redis_client),
+) -> Response:
+    job = await get_job(redis, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Unknown job")
+
+    # Prefer the Canvas-uploaded URL if the bridge succeeded for this
+    # figure on a previous tick — saves a round-trip through S3 and
+    # matches what the rendered Canvas Page would be using.
+    canvas_map = (getattr(job, "figure_canvas_urls", None) or {})
+    canvas_url = canvas_map.get(f"figures/{figure_ref}") or canvas_map.get(
+        f"figures/{figure_ref}.png"
+    )
+    target_url: str | None = canvas_url
+
+    if target_url is None:
+        # Fall back to the Reflow S3 URL. Matching strips the ``.png``
+        # extension because the rendered HTML's ref shape varies between
+        # ``figure-3`` and ``figure-3.png`` depending on which pipeline
+        # produced the markdown.
+        from ..canvas.reflow_client import ReflowClient, rewrite_presigned_url
+
+        reflow = ReflowClient()
+        try:
+            status = await reflow.get_status(job_id)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Figure proxy: reflow status fetch failed for %s: %s", job_id, exc)
+            raise HTTPException(status_code=502, detail="Could not reach Reflow") from exc
+        wanted = figure_ref.rsplit(".", 1)[0]
+        figures = status.get("figures") or status.get("stored_figures") or []
+        for fig in figures:
+            fid = str(fig.get("figure_id") or "").strip()
+            if fid == wanted:
+                target_url = rewrite_presigned_url(str(fig.get("url") or ""))
+                break
+        if not target_url:
+            raise HTTPException(status_code=404, detail="Figure not found for this job")
+
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.get(target_url, follow_redirects=True)
+        resp.raise_for_status()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Figure proxy: fetch failed for job %s ref %s: %s",
+            job_id, figure_ref, exc,
+        )
+        raise HTTPException(status_code=502, detail="Figure fetch failed") from exc
+
+    media_type = resp.headers.get("content-type") or "image/png"
+    return Response(content=resp.content, media_type=media_type)
+
+
 # ---- Alternative formats -------------------------------------------------
 
 @router.get("/alt/{job_id}/{fmt}")
