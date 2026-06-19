@@ -1,0 +1,73 @@
+# Automated dependency security updates.
+#
+# ISO 27001 Annex A 8.8 (Management of technical vulnerabilities) wants
+# a documented mechanism for tracking and applying security patches.
+# Dependabot opens PRs for new advisories and weekly version bumps;
+# CI runs the full suite on each one so we don't have to chase patches
+# manually.
+#
+# Security-only updates are unlimited (open one PR per advisory).
+# Routine version bumps are throttled to 5 open PRs at a time so the
+# queue stays reviewable.
+
+version: 2
+updates:
+  # Python dependencies declared in pyproject.toml + transitive lock.
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - python
+    commit-message:
+      prefix: deps
+      include: scope
+    # Group routine patch bumps into one PR per week so the queue
+    # doesn't drown the team. Security advisories ALWAYS get their
+    # own PR — Dependabot opens those immediately, outside the
+    # weekly schedule.
+    groups:
+      python-patch-bumps:
+        update-types:
+          - patch
+      python-minor-bumps:
+        update-types:
+          - minor
+
+  # GitHub Actions used in workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - ci
+    commit-message:
+      prefix: ci(deps)
+      include: scope
+
+  # Docker base image bumps. Pin in the Dockerfile to ``FROM
+  # python:3.11-slim`` so Dependabot can suggest digest-pinned updates.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "09:00"
+      timezone: America/Los_Angeles
+    open-pull-requests-limit: 2
+    labels:
+      - dependencies
+      - docker
+    commit-message:
+      prefix: docker(deps)
+      include: scope

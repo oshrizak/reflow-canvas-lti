@@ -26,6 +26,7 @@ import sys
 
 import httpx
 
+from ..canvas.audit import emit_operator_action
 from ..canvas.pdf_figures import (
     PdfFigureNotFoundError,
     extract_figure_for_reflow_id,
@@ -196,6 +197,13 @@ async def _main(args: argparse.Namespace) -> int:
             return 1
 
     print(f"reprocessing {len(jobs)} job(s)…")
+    emit_operator_action(
+        "reprocess_figures.start",
+        target_course=args.course_id,
+        target_job=args.job_id,
+        job_count=len(jobs),
+        job_ids=[j.reflow_job_id for j in jobs],
+    )
     total = {"uploaded": 0, "skipped_vector": 0, "fell_back_to_s3": 0, "failed": 0}
     for job in jobs:
         print(f"  [{job.reflow_job_id}] {job.canvas_file_name}")
@@ -213,6 +221,12 @@ async def _main(args: argparse.Namespace) -> int:
             total["failed"] += 1
 
     print(f"done. totals: {total}")
+    emit_operator_action(
+        "reprocess_figures.end",
+        target_course=args.course_id,
+        target_job=args.job_id,
+        **total,
+    )
     return 0 if total["failed"] == 0 else 2
 
 

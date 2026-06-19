@@ -75,6 +75,55 @@ def emit(event: str, **fields: Any) -> None:
         _audit.info("audit-emit-failed event=%s", event)
 
 
+def emit_operator_action(action: str, **fields: Any) -> None:
+    """Write one ``operator_action`` row tagged with OS-level identity.
+
+    Operator-CLIs (``connector/tools/*``) call this so out-of-band
+    state changes (figure reprocessing, per-user data erasure, manual
+    re-conversion, etc.) land in the same audit log faculty actions
+    do — ISO 27001 Annex A 8.15 wants admin actions logged too. The
+    log line carries:
+
+      * ``action``    — what the operator did (caller's choice)
+      * ``os_user``   — the system account that ran the command
+      * ``host``      — hostname of the box the command ran on
+      * ``pid``       — process id, useful when correlating with
+                        container logs
+      * any extra ``**fields`` the caller wants on the record
+
+    Emitted at ``WARNING`` level so it surfaces under typical
+    log-warning grep filters without burying real warnings — the
+    cadence is low (operator actions happen at human pace).
+    """
+    import os
+    import socket
+
+    try:
+        os_user = os.environ.get("USER") or os.environ.get("USERNAME") or "?"
+    except Exception:  # pragma: no cover
+        os_user = "?"
+    try:
+        host = socket.gethostname()
+    except Exception:  # pragma: no cover
+        host = "?"
+
+    payload: dict[str, Any] = {
+        "event": "operator_action",
+        "action": action,
+        "os_user": os_user,
+        "host": host,
+        "pid": os.getpid(),
+    }
+    for k, v in fields.items():
+        if v is None:
+            continue
+        payload[k] = v
+    try:
+        _audit.warning(json.dumps(payload, default=str))
+    except Exception:  # pragma: no cover
+        _audit.warning("audit-emit-failed event=operator_action action=%s", action)
+
+
 @contextmanager
 def time_api_call(
     *,

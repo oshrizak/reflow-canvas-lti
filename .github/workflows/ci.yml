@@ -37,3 +37,16 @@ jobs:
 
       - name: Pytest
         run: pytest tests/
+
+      # Dependency CVE scan (ISO 27001 Annex A 8.8 — Management of
+      # technical vulnerabilities). ``continue-on-error`` keeps the
+      # build green during the initial rollout; findings show up in
+      # the PR's check output and can be triaged. Tighten to a
+      # blocking step once the baseline is clean — drop the
+      # ``continue-on-error`` and pip-audit will fail the build on
+      # any new advisory.
+      - name: pip-audit (CVE scan)
+        continue-on-error: true
+        run: |
+          pip install pip-audit
+          pip-audit --strict

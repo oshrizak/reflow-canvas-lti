@@ -164,6 +164,26 @@ To leave **Translate** and **Audio MP3** off entirely, simply don't set
 modal and return clean 503s with setup instructions — no document
 content ever leaves the connector.
 
+## Operator tools (`python -m connector.tools.*`)
+
+Every state-touching CLI under ``connector/tools/`` writes a structured
+``operator_action`` line into the same audit log faculty actions go
+into (``reflow.canvas.audit``). The line carries ``os_user`` + ``host``
++ ``pid`` + whatever extra fields the tool reports. Grep
+``operator_action`` to see every admin-level change made out-of-band.
+
+| Tool | What it does | When you'd run it |
+|---|---|---|
+| ``generate_keys`` | Mints ``TOKEN_ENCRYPTION_KEY`` + ``CSRF_SECRET_KEY`` (32 bytes urlsafe each). Prints to stdout. | Before first launch; on any planned key rotation. |
+| ``reprocess_figures --course-id <c>`` / ``--job-id <j>`` | Backfills PDF-extracted figures over Reflow's gridded copies; rewrites the Canvas Page to point at the refreshed file URLs. Idempotent. | After upgrading to a connector version with the figure-extraction pipeline (one-off); to fix specific jobs whose figures look wrong. |
+| ``erase_user --user-id <uid>`` | Per-user data erasure for GDPR Article 17 / FERPA amendment. Deletes OAuth tokens, sessions, consent records, jobs; pseudonymises audit log rows. Defaults to dry-run; ``--commit`` applies. | When you receive an erasure request. |
+
+The erasure tool is the right answer to a data-subject erasure
+request against the connector's local state. **Reflow Core stores its
+own copies of converted markdown + figures**; satisfying the request
+fully requires a parallel request against Core. Document the path
+in your institution's data-subject-rights procedure.
+
 ## Locking down the host file system
 
 `.env` is a plaintext file on the host. Restrict it:
