@@ -586,12 +586,12 @@
     btn.title = v.title;
     btn.setAttribute("aria-label", v.aria);
     btn.innerHTML =
-      '<svg viewBox="0 0 36 36" width="32" height="32" aria-hidden="true">' +
-      '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#e8eaed" stroke-width="3.2"/>' +
-      '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="' + color + '" stroke-width="3.2"' +
+      '<svg viewBox="0 0 36 36" width="24" height="24" aria-hidden="true">' +
+      '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#e8eaed" stroke-width="2.8"/>' +
+      '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="' + color + '" stroke-width="2.8"' +
       '          stroke-dasharray="' + score + ' ' + (100 - score) + '" stroke-dashoffset="25"' +
       '          stroke-linecap="round" transform="rotate(-90 18 18)"/>' +
-      '  <text x="18" y="21" text-anchor="middle" font-size="10" font-weight="700" fill="' + color + '">' + label + '</text>' +
+      '  <text x="18" y="21.5" text-anchor="middle" font-size="11" font-weight="600" font-family="system-ui,-apple-system,Segoe UI,sans-serif" fill="' + color + '">' + label + '</text>' +
       '</svg>';
     btn.addEventListener("click", function (e) {
       e.preventDefault(); e.stopPropagation();
@@ -1147,7 +1147,11 @@
       // pushing the next column.
       ".reflow-pn-wrap.reflow-pn-cell{position:absolute !important;top:50% !important;right:0.5rem !important;transform:translateY(-50%) !important;margin:0 !important;z-index:5 !important;pointer-events:none !important;display:inline-block !important;width:auto !important;}",
       ".reflow-pn-wrap.reflow-pn-cell .reflow-pn-dial{pointer-events:auto;}",
-      ".reflow-pn-dial{background:transparent;border:0;padding:0;margin:0;cursor:pointer;line-height:0;border-radius:50%;transition:transform 120ms,box-shadow 120ms;vertical-align:middle;}",
+      // New Files UI: dial sits inline in the actions column next to the
+      // 3-dot menu. Small top offset nudges the dial to align optically
+      // with the menu icon, which carries more vertical padding.
+      ".reflow-pn-wrap.reflow-pn-actions{display:inline-flex;align-items:center;flex-shrink:0;margin:0;}",
+      ".reflow-pn-dial{background:transparent;border:0;padding:0;margin:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1;border-radius:50%;transition:transform 120ms,box-shadow 120ms;vertical-align:middle;}",
       ".reflow-pn-dial:hover{transform:scale(1.08);box-shadow:0 0 0 4px rgba(0,0,0,0.05);}",
       ".reflow-pn-dial:focus{outline:none;box-shadow:0 0 0 3px rgba(10,95,181,0.4);}",
       // Modal
@@ -1963,13 +1967,12 @@
         try {
           // Make the actions cell layout side-by-side so the dial sits
           // immediately before the row's existing menu button instead of
-          // overlaying it.
-          var cs = getComputedStyle(actionsCell);
-          if (cs.display.indexOf("flex") < 0) {
-            actionsCell.style.display = "flex";
-            actionsCell.style.alignItems = "center";
-            actionsCell.style.gap = "0.5rem";
-          }
+          // overlaying it. Center the pair horizontally + vertically so
+          // they line up with the Status column's icon visually.
+          actionsCell.style.display = "flex";
+          actionsCell.style.alignItems = "center";
+          actionsCell.style.justifyContent = "center";
+          actionsCell.style.gap = "0.5rem";
         } catch (e) { /* defensive */ }
         actionsCell.insertBefore(wrap, actionsCell.firstChild);
         return;
