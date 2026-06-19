@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse, Response
 from redis.asyncio import Redis
 
 from ..canvas.client import CanvasClient
@@ -120,6 +120,116 @@ async def review_one(
         .replace("{{ canvas_course_id }}", job.canvas_course_id)
     )
     return HTMLResponse(body)
+
+
+@router.get("/{job_id}/pdf")
+async def review_pdf_proxy(
+    job_id: str,
+    redis: Redis = Depends(get_redis_client),
+    reflow_lti_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> Response:
+    """Same-origin proxy for the original Canvas PDF.
+
+    Canvas Cloud's ``frame-ancestors`` CSP refuses to let external origins
+    iframe its file viewer, so the review screen pulls the bytes through
+    the connector instead. Auth: the instructor's LTI session cookie
+    plus the job-belongs-to-this-course check; the fetch itself uses the
+    job's stored OAuth token via the same client the bridge worker uses.
+    """
+    session = await _require_session(redis, reflow_lti_session)
+    job = await get_job(redis, job_id)
+    if job is None or job.canvas_course_id != session.course_id:
+        raise HTTPException(status_code=404, detail="Unknown job")
+
+    from ..workers.reflow_bridge_worker import _canvas_client_for_job
+
+    client = await _canvas_client_for_job(redis, job)
+    try:
+        pdf_bytes = await client.download_file(job.canvas_file_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "PDF proxy failed for job %s (file %s): %s",
+            job_id, job.canvas_file_id, exc,
+        )
+        raise HTTPException(
+            status_code=502, detail="Could not fetch source PDF from Canvas"
+        ) from exc
+
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={
+            # ``inline`` keeps the browser's PDF viewer in-iframe; without
+            # it, some browsers default to download for proxied PDFs.
+            "Content-Disposition": f'inline; filename="{job.canvas_file_name}"',
+        },
+    )
+
+
+@router.get("/{job_id}/canvas-page", response_class=HTMLResponse)
+async def review_canvas_page_proxy(
+    job_id: str,
+    redis: Redis = Depends(get_redis_client),
+    reflow_lti_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> HTMLResponse:
+    """Same-origin render of the live Canvas Page body.
+
+    Once the bridge has successfully published, this surface shows the
+    page as Canvas stores it (post-publish, post-edits-in-Canvas), not
+    the connector's pre-publish HTML. The body is wrapped in a minimal
+    HTML shell so it renders standalone — Canvas's own page chrome
+    (nav, sidebars) is intentionally dropped. Inline images embedded by
+    Canvas load cross-origin without issue; only iframing the page
+    itself is blocked by Canvas's CSP.
+    """
+    session = await _require_session(redis, reflow_lti_session)
+    job = await get_job(redis, job_id)
+    if job is None or job.canvas_course_id != session.course_id:
+        raise HTTPException(status_code=404, detail="Unknown job")
+    if not job.canvas_page_url:
+        return HTMLResponse(
+            "<p style='font-family:system-ui;padding:1rem;color:#555;'>"
+            "This Canvas Page hasn't been published yet. The accessible "
+            "preview on the right is what will be created when you approve."
+            "</p>"
+        )
+
+    from ..workers.reflow_bridge_worker import _canvas_client_for_job
+
+    client = await _canvas_client_for_job(redis, job)
+    try:
+        page = await client.get_page(job.canvas_course_id, job.canvas_page_url)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Canvas Page proxy failed for job %s (page %s): %s",
+            job_id, job.canvas_page_url, exc,
+        )
+        raise HTTPException(
+            status_code=502, detail="Could not fetch Canvas Page"
+        ) from exc
+
+    body = page.get("body") or "<p>(Canvas Page has no body.)</p>"
+    title = page.get("title") or job.canvas_file_name
+    return HTMLResponse(
+        f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title}</title>
+<style>
+  body {{ font-family: system-ui, sans-serif; margin: 1rem 1.5rem; line-height: 1.5; color: #222; }}
+  img {{ max-width: 100%; height: auto; }}
+  table {{ border-collapse: collapse; margin: 0.5rem 0; }}
+  th, td {{ border: 1px solid #999; padding: 0.25rem 0.5rem; }}
+  h1, h2, h3 {{ line-height: 1.25; }}
+</style>
+</head>
+<body>
+{body}
+</body>
+</html>"""
+    )
 
 
 @router.post("/{job_id}/approve")

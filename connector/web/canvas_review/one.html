@@ -14,9 +14,10 @@
   button.danger { background: white; color: #a00; border-color: #a00; }
   main { display: grid; grid-template-columns: 1fr 1fr; min-height: calc(100vh - 4rem); }
   iframe { width: 100%; height: 100%; border: 0; }
-  .pane { border-right: 1px solid #ddd; overflow: auto; padding: 1rem 1.5rem; }
+  .pane { border-right: 1px solid #ddd; padding: 1rem 1.5rem 0; display: flex; flex-direction: column; min-height: 0; }
   .pane:last-child { border-right: 0; }
-  h2 { font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.04em; color: #555; margin-top: 0; }
+  .pane iframe { flex: 1 1 auto; min-height: 0; background: #fff; }
+  h2 { font-size: 0.95rem; text-transform: uppercase; letter-spacing: 0.04em; color: #555; margin-top: 0; flex: 0 0 auto; }
   #status { padding: 0.5rem 1.5rem; color: #444; min-height: 1.5rem; }
 </style>
 </head>
@@ -34,10 +35,10 @@
   <main>
     <section class="pane">
       <h2>Original PDF</h2>
-      <p>Open the original in Canvas if you want to compare side-by-side: it lives in Course Files.</p>
+      <iframe id="pdf-preview" title="Original PDF preview"></iframe>
     </section>
     <section class="pane">
-      <h2>Proposed accessible page</h2>
+      <h2 id="preview-heading">Proposed accessible page</h2>
       <iframe id="preview" title="Proposed accessible page preview"></iframe>
     </section>
   </main>
@@ -49,13 +50,28 @@
   const statusEl = document.getElementById("status");
 
   // Canvas refuses to be iframed by external origins — its CSP
-  // ``frame-ancestors`` directive only allows its own institutional
-  // hosts. So we *always* preview the connector's own rendered
-  // accessible HTML in the iframe (same origin, no CSP issue); when
-  // the bridge successfully wrote a Canvas Page, we expose it via an
-  // "Open in Canvas" link in the header instead of trying to embed it.
-  const preview = document.getElementById("preview");
+  // ``frame-ancestors`` only allows its own institutional hosts. So
+  // both panes go through same-origin proxies on the connector:
+  //   * Left: ``/canvas/review/{job}/pdf`` streams the PDF bytes
+  //     (fetched server-side with the instructor's OAuth token) so the
+  //     browser's built-in PDF viewer renders inline.
+  //   * Right: ``/canvas/review/{job}/canvas-page`` fetches the live
+  //     Canvas Page body via API and wraps it in a minimal shell. If
+  //     the bridge hasn't published yet we fall back to the connector's
+  //     accessible HTML preview (the source the bridge will write).
+  // "Open in Canvas" stays in the header for when faculty want the
+  // full Canvas chrome.
+  const pdfFrame = document.getElementById("pdf-preview");
   if (jobId) {
+    pdfFrame.src = `/canvas/review/${encodeURIComponent(jobId)}/pdf`;
+  }
+
+  const preview = document.getElementById("preview");
+  const previewHeading = document.getElementById("preview-heading");
+  if (pageUrl && jobId) {
+    preview.src = `/canvas/review/${encodeURIComponent(jobId)}/canvas-page`;
+    previewHeading.textContent = "Published Canvas page";
+  } else if (jobId) {
     preview.src = `/canvas/panorama/alt/${encodeURIComponent(jobId)}/html`;
   } else {
     statusEl.textContent = "No previewable content for this job yet.";
