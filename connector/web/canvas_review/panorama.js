@@ -55,18 +55,27 @@
   // (HTML preview, HTML-with-math, Translate output, Immersive Reader)
   // stay as ``target="_blank"`` so faculty actually see the rendered
   // page in a new tab.
+  // Groups organise the 11 alt-formats into mental buckets so the
+  // grid is scannable instead of a wall of squares. ``order`` matters
+  // because the rendered sections follow this list top-to-bottom.
+  var FORMAT_GROUPS = [
+    { id: "read",      label: "Read"             },
+    { id: "listen",    label: "Listen & translate" },
+    { id: "document",  label: "Document formats" },
+    { id: "original",  label: "Original"         }
+  ];
   var FORMATS = [
-    { id: "source", label: "Source File", icon: "📄", color: "#0a5fb5", live: true },
-    { id: "html", label: "Accessible HTML", icon: "🌐", color: "#0a5fb5", live: true },
-    { id: "html-math", label: "HTML with Math", icon: "∑", color: "#5b3da6", live: true },
-    { id: "txt", label: "Plain Text", icon: "🅣", color: "#2e7d32", live: true, download: true },
-    { id: "markdown", label: "Markdown", icon: "📝", color: "#1d1d1d", live: true, download: true },
-    { id: "epub", label: "ePub", icon: "📚", color: "#0e7a8a", live: true, download: true },
-    { id: "audio", label: "Audio (MP3)", icon: "🎧", color: "#2e7d32", live: true, download: true },
-    { id: "translate", label: "Translate…", icon: "🌐", color: "#2e7d32", live: true, picker: "language" },
-    { id: "ocr", label: "Searchable PDF", icon: "🔎", color: "#cc7a00", live: true, download: true },
-    { id: "immersive", label: "Immersive Reader", icon: "👁", color: "#5b3da6", live: true },
-    { id: "braille", label: "Braille (BRF)", icon: "⠿", color: "#5b3da6", live: true, download: true }
+    { id: "html",      group: "read",     label: "Accessible HTML",    icon: "🌐", color: "#0a5fb5", live: true },
+    { id: "html-math", group: "read",     label: "HTML with math",     icon: "∑",  color: "#5b3da6", live: true },
+    { id: "txt",       group: "read",     label: "Plain text",         icon: "🅣", color: "#2e7d32", live: true, download: true },
+    { id: "markdown",  group: "read",     label: "Markdown",           icon: "📝", color: "#1d1d1d", live: true, download: true },
+    { id: "audio",     group: "listen",   label: "Audio (MP3)",        icon: "🎧", color: "#2e7d32", live: true, download: true },
+    { id: "translate", group: "listen",   label: "Translate…",         icon: "🌐", color: "#2e7d32", live: true, picker: "language" },
+    { id: "immersive", group: "listen",   label: "Immersive Reader",   icon: "👁", color: "#5b3da6", live: true },
+    { id: "ocr",       group: "document", label: "Searchable PDF",     icon: "🔎", color: "#cc7a00", live: true, download: true },
+    { id: "epub",      group: "document", label: "ePub",               icon: "📚", color: "#0e7a8a", live: true, download: true },
+    { id: "braille",   group: "document", label: "Braille (BRF)",      icon: "⠿", color: "#5b3da6", live: true, download: true },
+    { id: "source",    group: "original", label: "Source File",        icon: "📄", color: "#0a5fb5", live: true }
   ];
 
   // Language options for the Translate dialog. Covers CSUEB's largest
@@ -743,10 +752,13 @@
       studentPrimary.href = ORIGIN + "/canvas/panorama/alt/" + encodeURIComponent(payload.job_id) + "/html" + previewSuffix;
     }
 
-    // Populate formats grid
+    // Populate formats grid — grouped by FORMAT_GROUPS so faculty can
+    // scan by purpose ("read" vs "listen & translate" vs "document
+    // formats" vs "original") instead of staring at a wall of 11
+    // identical-looking squares.
     var grid = modal.querySelector(".reflow-pn-modal-grid");
     var availableLive = payload.available_formats || ["html", "txt", "markdown"];
-    FORMATS.forEach(function (fmt) {
+    function _buildFmtCard(fmt) {
       var enabled = fmt.live && (fmt.id === "source"
                                   || availableLive.indexOf(fmt.id) >= 0
                                   || fmt.id === "translate"
@@ -787,11 +799,25 @@
         el.title = "Not yet enabled.";
       }
       el.innerHTML =
-        '<span class="reflow-pn-fmt-card-icon" style="background:' + fmt.color + '20;color:' + fmt.color + '">' +
+        '<span class="reflow-pn-fmt-card-icon" style="background:' + fmt.color + '14;color:' + fmt.color + '">' +
         fmt.icon + '</span>' +
         '<span class="reflow-pn-fmt-card-label">' + esc(fmt.label) + '</span>' +
         (enabled ? "" : '<span class="reflow-pn-fmt-card-soon">soon</span>');
-      grid.appendChild(el);
+      return el;
+    }
+    FORMAT_GROUPS.forEach(function (group) {
+      var fmtsInGroup = FORMATS.filter(function (f) { return f.group === group.id; });
+      if (!fmtsInGroup.length) return;
+      var section = document.createElement("section");
+      section.className = "reflow-pn-fmt-group";
+      section.innerHTML =
+        '<h3 class="reflow-pn-fmt-group-label">' + esc(group.label) + '</h3>' +
+        '<div class="reflow-pn-fmt-group-grid"></div>';
+      var groupGrid = section.querySelector(".reflow-pn-fmt-group-grid");
+      fmtsInGroup.forEach(function (fmt) {
+        groupGrid.appendChild(_buildFmtCard(fmt));
+      });
+      grid.appendChild(section);
     });
 
     function close() { overlay.remove(); }
@@ -1230,7 +1256,7 @@
       ".reflow-pn-dial:focus{outline:none;box-shadow:0 0 0 3px rgba(10,95,181,0.4);}",
       // Modal
       ".reflow-pn-modal{position:fixed;inset:0;background:rgba(15,20,30,0.55);display:flex;align-items:center;justify-content:center;z-index:99999;font:14px system-ui,sans-serif;color:#1d1d1d;}",
-      ".reflow-pn-modal-card{background:#fff;width:min(40rem,92vw);max-height:88vh;border-radius:10px;box-shadow:0 24px 64px rgba(0,0,0,0.25);display:flex;flex-direction:column;overflow:hidden;}",
+      ".reflow-pn-modal-card{background:#fff;width:min(44rem,94vw);max-height:90vh;border-radius:12px;box-shadow:0 24px 64px rgba(15,20,30,0.22);display:flex;flex-direction:column;overflow:hidden;}",
       ".reflow-pn-modal-header{display:flex;align-items:flex-start;justify-content:space-between;padding:1.25rem 1.5rem 0.75rem;border-bottom:1px solid #ececec;}",
       ".reflow-pn-modal-titles h2{margin:0;font-size:1.05rem;font-weight:700;}",
       ".reflow-pn-modal-titles p{margin:0.2rem 0 0;color:#666;font-size:0.85rem;}",
@@ -1293,17 +1319,32 @@
       ".reflow-pn-more-formats[open] > summary::after{content:'▴';}",
       ".reflow-pn-more-formats > summary:hover{background:#eef4fc;}",
       ".reflow-pn-more-formats > summary::-webkit-details-marker{display:none;}",
-      ".reflow-pn-more-formats .reflow-pn-modal-grid{padding:0.6rem 0 0.4rem;grid-template-columns:1fr 1fr;}",
+      // Student ``More formats`` reveals the same grouped grid but at
+      // tighter padding (they came in via the big primary CTA above).
+      ".reflow-pn-more-formats .reflow-pn-modal-grid{padding:0.6rem 0 0.4rem;}",
+      ".reflow-pn-more-formats .reflow-pn-fmt-group-label{font-size:0.62rem;color:#7c8593;}",
       ".reflow-pn-modal-tools{display:flex;align-items:center;gap:0.6rem;padding:0.7rem 1.5rem;background:#eef4fc;border-bottom:1px solid #cfdcec;font-size:0.85rem;}",
       ".reflow-pn-edit-btn{background:#0a5fb5;color:#fff;border:0;padding:0.45rem 0.85rem;border-radius:6px;cursor:pointer;font-weight:600;}",
       ".reflow-pn-edit-btn:hover{background:#084a91;}",
       ".reflow-pn-tools-hint{color:#444;}",
-      ".reflow-pn-modal-grid{display:grid;grid-template-columns:1fr 1fr;gap:0.55rem;padding:0.9rem 1.5rem;overflow:auto;}",
-      ".reflow-pn-fmt-card{display:flex;align-items:center;gap:0.7rem;padding:0.6rem 0.85rem;border:1px solid #e6e6e6;border-radius:8px;text-decoration:none;color:#1d1d1d;background:#fff;transition:transform 120ms,box-shadow 120ms;}",
-      ".reflow-pn-fmt-card:hover{transform:translateY(-1px);box-shadow:0 2px 8px rgba(0,0,0,0.06);}",
+      // Grid is now a stack of grouped sections, each with its own
+      // auto-fit inner grid. ``minmax(11rem, 1fr)`` collapses to one
+      // column on narrow viewports and expands to two or three on
+      // wider modal widths without media-query plumbing.
+      ".reflow-pn-modal-grid{display:flex;flex-direction:column;gap:0.9rem;padding:1rem 1.5rem 1.1rem;overflow:auto;}",
+      ".reflow-pn-fmt-group{display:flex;flex-direction:column;gap:0.5rem;}",
+      ".reflow-pn-fmt-group-label{margin:0;font-size:0.68rem;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#6b7280;}",
+      ".reflow-pn-fmt-group-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(11rem,1fr));gap:0.5rem;}",
+      // Card refinement: slightly softer border, squircle icon
+      // (border-radius 8px not 50%), refined hover (border shifts +
+      // subtle lift). Icon background opacity tuned down from 20 to
+      // 14 so the accent reads as accent, not a hard chip.
+      ".reflow-pn-fmt-card{display:flex;align-items:center;gap:0.7rem;padding:0.55rem 0.8rem;border:1px solid #e7e9ec;border-radius:8px;text-decoration:none;color:#1d1d1d;background:#fff;transition:border-color 120ms,transform 120ms,box-shadow 120ms;}",
+      ".reflow-pn-fmt-card:hover{border-color:#bfc4cb;transform:translateY(-1px);box-shadow:0 4px 12px rgba(15,20,30,0.07);}",
+      ".reflow-pn-fmt-card:focus-visible{outline:2px solid #0a5fb5;outline-offset:2px;border-color:#0a5fb5;}",
       ".reflow-pn-fmt-card.is-disabled{opacity:0.45;cursor:not-allowed;pointer-events:none;}",
-      ".reflow-pn-fmt-card-icon{flex:0 0 auto;width:1.9rem;height:1.9rem;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:1rem;}",
-      ".reflow-pn-fmt-card-label{flex:1;font-size:0.88rem;font-weight:500;}",
+      ".reflow-pn-fmt-card-icon{flex:0 0 auto;width:1.9rem;height:1.9rem;border-radius:8px;display:flex;align-items:center;justify-content:center;font-size:0.95rem;line-height:1;}",
+      ".reflow-pn-fmt-card-label{flex:1;font-size:0.88rem;font-weight:500;line-height:1.25;}",
       ".reflow-pn-fmt-card-soon{font-size:0.62rem;font-weight:700;text-transform:uppercase;color:#999;background:#f0f0f0;padding:0.12rem 0.4rem;border-radius:999px;}",
       ".reflow-pn-modal-footer{display:flex;align-items:center;justify-content:space-between;padding:0.7rem 1.5rem;border-top:1px solid #ececec;background:#fafafa;font-size:0.83rem;color:#444;}",
       ".reflow-pn-switch{position:relative;display:inline-block;width:2.4rem;height:1.35rem;}",
