@@ -635,6 +635,7 @@
       '  <button class="reflow-pn-modal-close" type="button" aria-label="Close">&times;</button>' +
       '</header>' +
       _renderReportHeader(payload, score, color) +
+      _renderVerapdfViolations(payload) +
       _renderCanvasPageBanner(payload) +
       _renderApprovalBar(payload) +
       (STATE.userRole === "Instructor"
@@ -1156,7 +1157,7 @@
       // menu. Top:50% + translateY(-50%) keeps it on the same baseline as
       // every other icon in the row. Left is negative so the wrap escapes
       // the actions cell's left edge into the gap.
-      ".reflow-pn-wrap.reflow-pn-actions{position:absolute !important;top:50% !important;left:-2.25rem !important;transform:translateY(-50%) !important;display:inline-flex !important;align-items:center !important;justify-content:center !important;margin:0 !important;z-index:5 !important;pointer-events:none !important;}",
+      ".reflow-pn-wrap.reflow-pn-actions{position:absolute !important;top:50% !important;left:0.5rem !important;transform:translate(-50%, -50%) !important;display:inline-flex !important;align-items:center !important;justify-content:center !important;margin:0 !important;z-index:5 !important;pointer-events:none !important;}",
       ".reflow-pn-wrap.reflow-pn-actions .reflow-pn-dial{pointer-events:auto;}",
       ".reflow-pn-dial{background:transparent;border:0;padding:0;margin:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1;border-radius:50%;transition:transform 120ms,box-shadow 120ms;vertical-align:middle;}",
       ".reflow-pn-dial:hover{transform:scale(1.08);box-shadow:0 0 0 4px rgba(0,0,0,0.05);}",
@@ -1195,6 +1196,21 @@
       // confirmation copy. Hint text reads as one column under the pill.
       ".reflow-pn-modal-report--student{flex-direction:column;align-items:flex-start;gap:0.25rem;padding:1rem 1.5rem;}",
       ".reflow-pn-report-hint{font-size:0.83rem;color:#5b6573;font-weight:400;}",
+      // VeraPDF violations disclosure. Sits between the score header and
+      // the Canvas Page banner; collapsed by default so the modal stays
+      // scannable. Contrast tuned for WCAG 2.2 AA (4.5:1 vs surrounding
+      // backgrounds for the body text, 3:1 for the rule clause chip).
+      ".reflow-pn-vrules{border-bottom:1px solid #f3f3f3;background:#fff;}",
+      ".reflow-pn-vrules-summary{cursor:pointer;padding:0.85rem 1.5rem;font-size:0.9rem;color:#1d1d1d;font-weight:600;list-style:revert;}",
+      ".reflow-pn-vrules-summary:focus-visible{outline:2px solid #1565c0;outline-offset:2px;}",
+      ".reflow-pn-vrules-hint{font-size:0.83rem;color:#4a5260;font-weight:400;margin:0;padding:0 1.5rem 0.75rem;line-height:1.45;}",
+      ".reflow-pn-vrules-hint a{color:#0a52a5;text-decoration:underline;}",
+      ".reflow-pn-vrule-list{list-style:none;margin:0;padding:0 1.5rem 1rem;display:flex;flex-direction:column;gap:0.6rem;}",
+      ".reflow-pn-vrule{background:#f6f8fa;border:1px solid #d6dbe1;border-radius:6px;padding:0.6rem 0.85rem;}",
+      ".reflow-pn-vrule-head{display:flex;align-items:center;justify-content:space-between;gap:0.75rem;margin-bottom:0.3rem;}",
+      ".reflow-pn-vrule-clause{display:inline-block;background:#0a52a5;color:#fff;border-radius:4px;padding:0.1rem 0.45rem;font-size:0.74rem;font-weight:700;font-family:'SFMono-Regular',Menlo,Consolas,monospace;}",
+      ".reflow-pn-vrule-count{font-size:0.78rem;color:#4a5260;font-weight:600;}",
+      ".reflow-pn-vrule-desc{font-size:0.88rem;color:#1d1d1d;line-height:1.4;}",
       // Student smart-default CTA. Big primary card, then a discreet
       // ``More formats`` disclosure containing the full grid.
       ".reflow-pn-student-cta{padding:1rem 1.5rem 0.5rem;display:flex;flex-direction:column;gap:0.75rem;}",
@@ -1410,6 +1426,50 @@
   // act on a low-scoring document). Students get a positive
   // confirmation that an accessible version exists, since the raw
   // score is not actionable from their side.
+  function _renderVerapdfViolations(payload) {
+    // Only render when an actual VeraPDF audit produced violations.
+    // The heuristic source_score path doesn't surface anything here —
+    // it has no per-rule data to list.
+    if (STATE.userRole !== "Instructor") return "";
+    if (payload.source_score_provenance !== "verapdf") return "";
+    var violations = Array.isArray(payload.verapdf_violations) ? payload.verapdf_violations : [];
+    if (!violations.length) return "";
+    // Group identical rule_ids defensively in case the backend ever
+    // duplicates them. Sort by occurrence_count descending so the most
+    // pervasive issues read first.
+    var sorted = violations.slice().sort(function (a, b) {
+      return (b.occurrence_count || 0) - (a.occurrence_count || 0);
+    });
+    var items = sorted.map(function (v) {
+      var occ = v.occurrence_count || 1;
+      var clauseRef = v.clause
+        ? '<code class="reflow-pn-vrule-clause">PDF/UA &sect;' + esc(String(v.clause)) + '</code>'
+        : '';
+      var occText = occ === 1 ? '1 instance' : (occ + ' instances');
+      return '<li class="reflow-pn-vrule">' +
+             '  <div class="reflow-pn-vrule-head">' + clauseRef +
+             '    <span class="reflow-pn-vrule-count">' + esc(occText) + '</span>' +
+             '  </div>' +
+             '  <div class="reflow-pn-vrule-desc">' + esc(String(v.description || v.rule_id || "Rule violation")) + '</div>' +
+             '</li>';
+    }).join("");
+    var summary = sorted.length === 1
+      ? "1 PDF/UA rule failed on the original PDF"
+      : (sorted.length + " PDF/UA rules failed on the original PDF");
+    return '<details class="reflow-pn-vrules">' +
+           '  <summary class="reflow-pn-vrules-summary">' +
+           '    <span>Why this score? &middot; ' + esc(summary) + '</span>' +
+           '  </summary>' +
+           '  <p class="reflow-pn-vrules-hint">' +
+           '    These rules come from <a href="https://verapdf.org" target="_blank" rel="noopener">veraPDF</a>, ' +
+           '    the PDF Association\'s PDF/UA-1 validator. Each maps to a WCAG 2.x criterion. ' +
+           '    Fixing them in the source PDF (with Acrobat, PAC 2024, or your authoring tool) ' +
+           '    will improve the score on the next re-conversion.' +
+           '  </p>' +
+           '  <ol class="reflow-pn-vrule-list">' + items + '</ol>' +
+           '</details>';
+  }
+
   function _renderReportHeader(payload, score, color) {
     var isInstructor = STATE.userRole === "Instructor";
     if (isInstructor) {

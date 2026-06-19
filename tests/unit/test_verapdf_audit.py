@@ -7,7 +7,6 @@ VeraPDF actually emits.
 """
 
 import pytest
-
 from connector.canvas.verapdf_audit import _parse_report
 
 

@@ -78,6 +78,25 @@ class CanvasJob:
     # accessible-HTML views, so pages stay self-contained (no dependency on
     # the tunnel or the Reflow backend staying up).
     figure_canvas_urls: dict | None = None
+    # Real PDF/UA-1 audit result for the SOURCE PDF, produced by the
+    # watcher via canvas.verapdf_audit at submission time. Replaces the
+    # heuristic source_score that came out of canvas.signals. ``None``
+    # when the audit couldn't run (verapdf binary missing, audit
+    # timeout, non-PDF source format like docx).
+    #
+    # verapdf_score: 0..100, computed as passed_rules / applicable_rules.
+    #   The dial uses this as the "before" number.
+    # verapdf_is_compliant: True only when zero rules failed (PDF/UA
+    #   conformance is binary; the percentage is a relative measure).
+    # verapdf_violations: list of {rule_id, clause, description,
+    #   occurrence_count}. The alt-formats modal renders these so faculty
+    #   see WHY the score is what it is, not just a number.
+    # verapdf_audited_at: epoch seconds the audit finished. Lets the UI
+    #   tell faculty when the audit was last run.
+    verapdf_score: int | None = None
+    verapdf_is_compliant: bool | None = None
+    verapdf_violations: list | None = None
+    verapdf_audited_at: float | None = None
 
 
 async def already_processed(

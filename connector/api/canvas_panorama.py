@@ -507,16 +507,35 @@ async def _build_score_payload(redis: Redis, job_id: str) -> dict[str, Any]:
     if job is not None:
         payload["job_status"] = job.status
         # Before→after story. ``score`` (above) is the WCAG accessibility of
-        # the generated accessible version — the "after". Here we attach a
-        # coarse estimate of the ORIGINAL PDF's accessibility — the "before"
-        # — derived from how the pipeline classified the source (scanned vs
-        # born-digital, OCR'd, text layer present). The overlay shows the
-        # source estimate on the Original-PDF dial and the WCAG score on the
-        # accessible version, so faculty see the lift the conversion gave.
-        src_score, src_sev = source_accessibility_estimate(getattr(job, "signals", None))
-        if src_score is not None:
-            payload["source_score"] = src_score
-            payload["source_severity"] = src_sev
+        # the generated accessible version — the "after". Here we attach the
+        # ORIGINAL PDF's accessibility — the "before" — so the dial can show
+        # the lift the conversion gave.
+        #
+        # Prefer the real PDF/UA audit ``CanvasJob.verapdf_score`` produced
+        # by ``canvas.verapdf_audit`` at submission time when one is
+        # available. Fall back to the legacy heuristic over markdown
+        # signals only when the audit was skipped (non-PDF source, verapdf
+        # binary missing, audit timeout). The heuristic is honest about
+        # being a triage signal, not a WCAG conformance proof — see the
+        # docstring in ``canvas.signals``.
+        verapdf_score = getattr(job, "verapdf_score", None)
+        if verapdf_score is not None:
+            from ..canvas.panorama import severity_of as _severity_of
+            payload["source_score"] = int(verapdf_score)
+            payload["source_severity"] = _severity_of(int(verapdf_score))
+            payload["source_score_provenance"] = "verapdf"
+            payload["verapdf_is_compliant"] = bool(
+                getattr(job, "verapdf_is_compliant", False)
+            )
+            violations = getattr(job, "verapdf_violations", None) or []
+            payload["verapdf_violations"] = list(violations)
+            payload["verapdf_audited_at"] = getattr(job, "verapdf_audited_at", None)
+        else:
+            src_score, src_sev = source_accessibility_estimate(getattr(job, "signals", None))
+            if src_score is not None:
+                payload["source_score"] = src_score
+                payload["source_severity"] = src_sev
+                payload["source_score_provenance"] = "heuristic"
         # Surface the failure reason so the overlay can *tell the
         # professor why* a file isn't ready, instead of rendering a
         # blank dial. Only set when present; students never see this

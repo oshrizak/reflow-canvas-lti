@@ -28,6 +28,7 @@ import asyncio
 import logging
 import re
 import time
+from dataclasses import asdict
 from typing import Any
 
 from redis.asyncio import Redis
@@ -44,6 +45,8 @@ from ..canvas.state import (
 )
 from ..canvas.tenant import tk
 from ..canvas.user_oauth import get_user_token
+from ..canvas.verapdf_audit import VeraPDFError
+from ..canvas.verapdf_audit import run_audit as _verapdf_run_audit
 from ..config import settings
 from ..lti.platform import PlatformInstall
 from ..lti.platform_store import (
@@ -51,6 +54,11 @@ from ..lti.platform_store import (
     get_courses_for_platform,
     list_platforms,
 )
+
+# File extensions VeraPDF can audit. Everything else (.docx, .pptx, etc.)
+# the watcher submits to Reflow but doesn't audit — there's no PDF source
+# to give to verapdf. Lower-cased compare.
+_AUDITABLE_EXTS = (".pdf",)
 
 # Default scope set the watcher's CanvasClient asks for in multi-tenant
 # mode. Matches the readable-discovery subset declared in
@@ -72,6 +80,46 @@ _WATCHER_SCOPES = [
 ]
 
 logger = logging.getLogger(__name__)
+
+
+async def _run_verapdf_audit(
+    filename: str, content: bytes
+) -> dict[str, Any] | None:
+    """Run the VeraPDF PDF/UA audit and return a dict ready for CanvasJob.
+
+    Wraps ``connector.canvas.verapdf_audit.run_audit`` with the policy
+    the watcher needs:
+
+      * Skip non-PDF uploads (no source PDF to audit).
+      * Swallow ``VeraPDFError`` so a binary-missing / timeout / parse
+        failure doesn't kill the submission. The dial just falls back
+        to no audit data; faculty still get Reflow's converted output.
+
+    Returns ``None`` when no audit was produced.
+    """
+    if not filename.lower().endswith(_AUDITABLE_EXTS):
+        return None
+    try:
+        result = await _verapdf_run_audit(content)
+    except VeraPDFError as exc:
+        logger.warning(
+            "VeraPDF audit skipped for %s: %s",
+            filename, exc,
+        )
+        return None
+    except Exception:
+        logger.exception(
+            "Unexpected VeraPDF audit failure for %s — submission continues",
+            filename,
+        )
+        return None
+    return {
+        "score": result.score,
+        "is_compliant": result.is_compliant,
+        "violations": [asdict(v) for v in result.violations],
+        "audited_at": time.time(),
+    }
+
 
 # Regexes that extract Canvas file ids from arbitrary HTML content. Covers
 # all the URL shapes Canvas's RCE and APIs produce:
@@ -568,9 +616,20 @@ async def _scan_course(
         )
         try:
             content = await canvas.download_file(file_id)
-            # submit_document handles any supported format (PDF / DOCX / PPTX);
-            # mime type is inferred from filename.
-            reflow_job_id = await reflow.submit_document(filename, content)
+            # Run the Reflow submission and the VeraPDF accessibility audit
+            # concurrently. The audit doesn't gate submission — if verapdf
+            # isn't installed or times out we still need the Reflow job
+            # to exist so the bridge worker can do its half.
+            reflow_task = asyncio.create_task(
+                reflow.submit_document(filename, content),
+                name=f"reflow_submit:{file_id}",
+            )
+            audit_task = asyncio.create_task(
+                _run_verapdf_audit(filename, content),
+                name=f"verapdf_audit:{file_id}",
+            )
+            reflow_job_id = await reflow_task
+            audit_result = await audit_task  # safe: errors swallowed in _run_verapdf_audit
         except Exception:
             logger.exception("Failed to submit file %s/%s", course_id, file_id)
             continue
@@ -591,6 +650,13 @@ async def _scan_course(
                 # single-tenant scans pass None here, which the bridge
                 # interprets as "use the env-token client".
                 platform_id=platform_id,
+                # Real PDF/UA audit (replaces the canvas.signals heuristic
+                # for source_score). ``None`` fields when the audit didn't
+                # produce a result — see _run_verapdf_audit.
+                verapdf_score=audit_result["score"] if audit_result else None,
+                verapdf_is_compliant=audit_result["is_compliant"] if audit_result else None,
+                verapdf_violations=audit_result["violations"] if audit_result else None,
+                verapdf_audited_at=audit_result["audited_at"] if audit_result else None,
             ),
         )
         await mark_processed(redis, course_id, file_id)
