@@ -97,6 +97,47 @@ def test_parse_failing_report() -> None:
 
 
 @pytest.mark.unit
+def test_parse_verapdf_1_30_list_validation_result() -> None:
+    """verapdf >=1.30 returns validationResult as a list (one per profile)
+    instead of a single object — _parse_report tolerates both shapes."""
+    payload = {
+        "report": {
+            "jobs": [
+                {
+                    "validationResult": [
+                        {
+                            "compliant": False,
+                            "details": {
+                                "passedRules": 25,
+                                "failedRules": 4,
+                                "failedChecks": 4,
+                                "ruleSummaries": [
+                                    {
+                                        "ruleStatus": "FAILED",
+                                        "clause": "7.1",
+                                        "testNumber": 11,
+                                        "description": "Logical structure required.",
+                                        "failedChecks": 1,
+                                    },
+                                ],
+                            },
+                        }
+                    ]
+                }
+            ]
+        }
+    }
+    r = _parse_report(payload, flavour="ua1")
+
+    # 25 / 29 = 0.862 -> 86%
+    assert r.score == 86
+    assert r.passed_rules == 25
+    assert r.failed_rules == 4
+    assert len(r.violations) == 1
+    assert r.violations[0].rule_id == "7.1-11"
+
+
+@pytest.mark.unit
 def test_parse_empty_report() -> None:
     """No jobs at all — graceful zero, not an exception."""
     payload = {"report": {"jobs": []}}

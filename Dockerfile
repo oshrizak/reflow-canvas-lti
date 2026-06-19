@@ -10,7 +10,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         qpdf \
         unpaper \
         curl \
-        openjdk-17-jre-headless \
+        default-jre-headless \
         wget \
         unzip \
     && rm -rf /var/lib/apt/lists/*
@@ -20,9 +20,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ``connector.canvas.verapdf_audit`` to produce real per-criterion
 # pass/fail data instead of the rough source-score heuristic. Installs
 # under /opt/verapdf/verapdf with launcher script linked into /usr/local/bin.
-ARG VERAPDF_VERSION=1.27.32
+# Use the verapdf.org "rel" channel — always the latest stable release.
+# (Version-pinned URLs aren't published; the org doesn't ship GitHub
+# releases either.) Override via build-arg if pinning is needed.
+ARG VERAPDF_URL=https://software.verapdf.org/rel/verapdf-installer.zip
 RUN cd /tmp \
- && wget -q "https://software.verapdf.org/releases/${VERAPDF_VERSION}/verapdf-installer.zip" -O verapdf-installer.zip \
+ && wget -q "${VERAPDF_URL}" -O verapdf-installer.zip \
  && unzip -q verapdf-installer.zip \
  && cd verapdf-greenfield-* \
  && printf '%s\n' \

@@ -221,7 +221,15 @@ def _parse_report(payload: dict[str, Any], *, flavour: str) -> AuditResult:
         )
 
     job = jobs[0]
-    validation = job.get("validationResult", {}) or {}
+    # validationResult shape changed in verapdf 1.30: it's now a list (one
+    # entry per profile applied), where previously it was a single object.
+    # Tolerate both. When the list is empty, fall back to a stub so the
+    # details lookup below returns a clean zero-rules report.
+    raw_validation = job.get("validationResult", {})
+    if isinstance(raw_validation, list):
+        validation = raw_validation[0] if raw_validation else {}
+    else:
+        validation = raw_validation or {}
     details = validation.get("details", {}) or {}
 
     passed = int(details.get("passedRules", 0) or 0)
