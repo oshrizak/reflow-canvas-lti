@@ -612,7 +612,8 @@ class CanvasClient:
         return await self._get_paged(url, {"per_page": "100", "published": "true"})
 
     async def get_page(self, course_id: str, page_url: str) -> dict:
-        full_url = f"{self.base_url}/api/v1/courses/{course_id}/pages/{page_url}"
+        ref = self._page_ref(page_url)
+        full_url = f"{self.base_url}/api/v1/courses/{course_id}/pages/{ref}"
 
         async def _do(headers: dict[str, str]) -> httpx.Response:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
