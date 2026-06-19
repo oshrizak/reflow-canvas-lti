@@ -166,29 +166,81 @@ class ReflowClient:
     ) -> dict[str, Any]:
         """Forward a faculty PII approve/deny decision to Reflow Core.
 
-        Reflow Core's PII gate is approval-token-based: when the job
-        pauses at ``awaiting_approval``, the status payload exposes an
-        ``approval_token`` plus a ready-to-POST ``approval_url``
-        (``/api/v1/approval/{token}/decision``). That's the URL we hit
-        — there is NO ``/api/v1/documents/{job}/pii/approve`` in Core
-        (the connector used to assume there was; Core returned 405
-        Method Not Allowed and the panorama overlay's ``fetch`` came
-        back as "Failed to fetch" through the CORS error path).
+        Two upstream surfaces, tried in order:
 
-        Payload shape mirrors what Core's approval router accepts:
-        ``{decision, justification, reviewed_by}`` with decision
-        being "approved" or "denied".
+        1. **By-job-id endpoint** (preferred):
+           ``POST /api/v1/documents/{job_id}/pii/{approve,deny}``.
+           Single round-trip — the connector already authenticated with
+           an API key and already knows ``job_id`` from a prior status
+           poll, so requiring an approval-token round-trip is
+           redundant. Added to Core in
+           `EqualifyEverything/equalify-reflow#142 <https://github.com/EqualifyEverything/equalify-reflow/pull/142>`_.
+           Returns 405 Method Not Allowed on Core versions that pre-date
+           the PR — we detect that and fall back to (2).
+
+        2. **By-approval-token endpoint** (legacy fallback):
+           ``POST /api/v1/approval/{token}/decision``. Requires a prior
+           ``GET /api/v1/documents/{job_id}`` to read the
+           ``approval_token`` off the status payload. Still works for
+           the operator-driven flow (emailed approval links) and is the
+           shape Core has had all along.
+
+        Payload shape is identical between the two routes:
+        ``{decision, justification, reviewed_by}`` with ``decision``
+        being ``"approved"`` or ``"denied"``. Response shape (
+        ``{message, job_id, decision}``) is also normalized between the
+        two; the PR explicitly aligned the by-job-id endpoint with the
+        token endpoint's ``ApprovalResponse`` model so callers don't
+        branch on success.
 
         Raises ``ReflowApiError`` for 4xx/5xx, including:
-          * 404 when the job has no current approval token (already
-            decided, expired, or never paused on PII).
+          * 404 when the job is unknown (either endpoint) OR when the
+            token endpoint rejects the token (stale / already used).
           * 409 when the job already advanced past awaiting_approval
-            (parallel-tab race).
+            (parallel-tab race). The by-job-id endpoint surfaces this
+            directly via a status pre-check; the token endpoint
+            surfaces it via the connector-side pre-check below.
         """
 
         if decision not in ("approved", "denied"):
             raise ValueError(f"decision must be 'approved' or 'denied', got {decision!r}")
 
+        # ----- (1) by-job-id endpoint (PR #142) ---------------------
+        # We POST blind here — no status round-trip — because the
+        # endpoint itself does the status pre-check and 409s on race.
+        # The body shape matches what Core's ``PIIDecisionByJobIdRequest``
+        # Pydantic model declares.
+        by_id_path = "approve" if decision == "approved" else "deny"
+        by_id_url = (
+            f"{self.base_url}/api/v1/documents/{job_id}/pii/{by_id_path}"
+        )
+        by_id_payload = {
+            "justification": justification,
+            "reviewed_by": reviewed_by,
+        }
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            by_id_resp = await client.post(
+                by_id_url, headers=self._headers, json=by_id_payload,
+            )
+        # 405 (or 404 on routers that 404 unknown paths instead of
+        # 405'ing) means the endpoints from PR #142 aren't deployed on
+        # this Core. Fall through to the token flow rather than
+        # surfacing the failure.
+        if by_id_resp.status_code not in (404, 405):
+            if by_id_resp.status_code == 409:
+                raise ReflowApiError(
+                    by_id_resp.text or "Job already past awaiting_approval",
+                    status_code=409,
+                )
+            if by_id_resp.is_error:
+                raise ReflowApiError(
+                    f"Reflow Core PII {by_id_path} returned "
+                    f"{by_id_resp.status_code}: {by_id_resp.text[:200]}",
+                    status_code=by_id_resp.status_code,
+                )
+            return by_id_resp.json()
+
+        # ----- (2) by-approval-token endpoint (legacy fallback) ----
         # Fetch the job status to pull the current approval token.
         # The token is single-use + time-limited, so we don't cache it.
         status_url = f"{self.base_url}/api/v1/documents/{job_id}"

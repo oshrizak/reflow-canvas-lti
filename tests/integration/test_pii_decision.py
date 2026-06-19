@@ -55,26 +55,74 @@ def _plant_pii_job(redis_client, sess: dict[str, str], job_id: str) -> None:
 
 @pytest.mark.integration
 @respx.mock(assert_all_called=False)
-def test_pii_approve_hits_reflow_approval_endpoint(
+def test_pii_approve_prefers_by_job_id_endpoint(
     respx_mock, client, instructor_session, csrf_header, trusted_origin_headers, redis_client,
 ):
-    """The connector must call ``/api/v1/approval/{token}/decision`` —
-    not the made-up ``/documents/{job}/pii/approve`` we used to send.
-
-    The bug history: connector used to POST to
-    ``/api/v1/documents/{job}/pii/approve`` (no such route on Core),
-    Core 405'd, connector wrapped as 502, panorama overlay's fetch
-    came back as "Failed to fetch". This pins the URL contract.
-    """
+    """Preferred upstream call (per equalify-reflow#142) — when Core
+    exposes ``/api/v1/documents/{job}/pii/approve``, the connector POSTs
+    there directly. No status round-trip; the endpoint does the
+    awaiting_approval pre-check on Core's side."""
     cookies = {"reflow_lti_session": instructor_session["session_id"]}
-    job_id = "job-pii-1"
+    job_id = "job-pii-byid"
     _plant_pii_job(redis_client, instructor_session, job_id)
 
     base = _reflow_base()
+    by_id_route = respx_mock.post(
+        f"{base}/api/v1/documents/{job_id}/pii/approve",
+    ).mock(return_value=Response(200, json={
+        "message": "Job approved", "job_id": job_id, "decision": "approved",
+    }))
+    # Mock token route so we can assert it WAS NOT called (the by-id
+    # call should win).
+    token_route = respx_mock.post(f"{base}/api/v1/approval/tok-xyz/decision").mock(
+        return_value=Response(200, json={})
+    )
+
+    resp = client.post(
+        f"/canvas/panorama/pii-decision/{job_id}",
+        cookies=cookies,
+        headers={**csrf_header, **trusted_origin_headers, "Content-Type": "application/json"},
+        json={"decision": "approved", "justification": "Names are public bylines"},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert by_id_route.called, "connector did not POST to the by-job-id route"
+    assert not token_route.called, (
+        "connector fell back to the token route even though the by-job-id "
+        "route succeeded — fallback should only fire on 404/405"
+    )
+    # Body contract for the by-id endpoint matches PR #142's Pydantic model.
+    sent = by_id_route.calls.last.request
+    body = sent.read().decode("utf-8")
+    assert "justification" in body
+    assert "reviewed_by" in body
+
+
+@pytest.mark.integration
+@respx.mock(assert_all_called=False)
+def test_pii_approve_falls_back_to_token_endpoint_on_405(
+    respx_mock, client, instructor_session, csrf_header, trusted_origin_headers, redis_client,
+):
+    """Reflow Core versions pre-dating PR #142 don't have the by-job-id
+    endpoint and respond 405. The connector must transparently fall
+    back to the token flow so PII review keeps working across the
+    Core deploy window. This is the bug fix that prevents the
+    'Failed to fetch' regression we saw during the CSUEB pilot."""
+    cookies = {"reflow_lti_session": instructor_session["session_id"]}
+    job_id = "job-pii-fb"
+    _plant_pii_job(redis_client, instructor_session, job_id)
+
+    base = _reflow_base()
+    # By-job-id route 405s (endpoint not deployed yet).
+    by_id_route = respx_mock.post(
+        f"{base}/api/v1/documents/{job_id}/pii/approve",
+    ).mock(return_value=Response(405, json={"detail": "Method Not Allowed"}))
+    # Status fetch returns the approval token.
     respx_mock.get(f"{base}/api/v1/documents/{job_id}").mock(
         return_value=Response(200, json=_pause_status_payload(job_id))
     )
-    decision_route = respx_mock.post(f"{base}/api/v1/approval/tok-xyz/decision").mock(
+    # Token decision route succeeds.
+    token_route = respx_mock.post(f"{base}/api/v1/approval/tok-xyz/decision").mock(
         return_value=Response(200, json={
             "message": "Job approved", "job_id": job_id, "decision": "approved",
         })
@@ -88,12 +136,8 @@ def test_pii_approve_hits_reflow_approval_endpoint(
     )
 
     assert resp.status_code == 200, resp.text
-    assert decision_route.called, "connector did not POST to the approval-token route"
-    sent = decision_route.calls.last.request
-    body = sent.read().decode("utf-8")
-    assert '"decision"' in body and "approved" in body
-    assert "justification" in body
-    assert "reviewed_by" in body
+    assert by_id_route.called, "connector did not try the by-job-id route first"
+    assert token_route.called, "connector did not fall back to the token route after 405"
 
 
 @pytest.mark.integration
@@ -107,6 +151,11 @@ def test_pii_decision_requires_csrf(
     _plant_pii_job(redis_client, instructor_session, "job-pii-2")
 
     base = _reflow_base()
+    # Mock both possible upstream routes so we can assert NEITHER was
+    # called — CSRF rejection must happen before any forwarding.
+    by_id_forwarded = respx_mock.post(
+        f"{base}/api/v1/documents/job-pii-2/pii/approve",
+    ).mock(return_value=Response(200, json={}))
     forwarded = respx_mock.post(f"{base}/api/v1/approval/tok-xyz/decision").mock(
         return_value=Response(200, json={})
     )
@@ -118,6 +167,7 @@ def test_pii_decision_requires_csrf(
     )
     assert resp.status_code == 403
     assert not forwarded.called
+    assert not by_id_forwarded.called
 
 
 @pytest.mark.integration
@@ -134,6 +184,11 @@ def test_pii_decision_409_when_token_already_gone(
     _plant_pii_job(redis_client, instructor_session, job_id)
 
     base = _reflow_base()
+    # Force the connector down the legacy token-fallback path by 405'ing
+    # the by-job-id endpoint (simulates a pre-PR-#142 Core deployment).
+    respx_mock.post(
+        f"{base}/api/v1/documents/{job_id}/pii/approve",
+    ).mock(return_value=Response(405, json={"detail": "Method Not Allowed"}))
     respx_mock.get(f"{base}/api/v1/documents/{job_id}").mock(return_value=Response(200, json={
         "job_id": job_id, "status": "processing",
     }))
