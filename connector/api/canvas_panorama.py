@@ -1627,27 +1627,6 @@ async def unpublish_job(
     _require_csrf(session_id, csrf_token)
     _require_trusted_origin(request)
 
-    # Diagnostic logging for unexpected unpublish calls. Faculty have
-    # reported the job reverting to "awaiting_review" without them
-    # consciously clicking Unpublish. Capture the User-Agent, Referer,
-    # Origin, and the raw body so we can identify the source the next
-    # time this happens (panorama overlay vs. browser extension vs.
-    # accessibility scanner vs. keyboard-focus mishap).
-    try:
-        body_text = (await request.body()).decode("utf-8", errors="replace")[:500]
-    except Exception:  # noqa: BLE001 — diagnostic is best-effort
-        body_text = "<could not read body>"
-    logger.warning(
-        "unpublish_job: job=%s user=%s ip=%s ua=%r referer=%r origin=%r body=%r",
-        job_id,
-        sess.user_id,
-        _client_ip(request),
-        request.headers.get("user-agent", ""),
-        request.headers.get("referer", ""),
-        request.headers.get("origin", ""),
-        body_text,
-    )
-
     job.status = "awaiting_review"
     await put_job(redis, job)
     # Best-effort: also unpublish the Canvas wiki Page so it leaves the
