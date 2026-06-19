@@ -437,6 +437,28 @@ async def _drive_job(
     # retry). Reusing the stored Canvas URLs means a job that keeps retrying the
     # page write doesn't re-download from S3 and re-POST to Canvas every ~30s.
     figure_canvas_urls: dict[str, str] = dict(getattr(job, "figure_canvas_urls", None) or {})
+
+    # Fetch the source PDF once so we can pull figure bytes directly from
+    # it — Reflow's S3 copies carry a vision-pipeline tile grid baked in,
+    # while the PDF's own embedded rasters are the original clean
+    # imagery. The download is gated on there being at least one figure
+    # that isn't already in figure_canvas_urls (otherwise the existing
+    # map covers everything and the PDF fetch is wasted work).
+    needs_pdf = any(
+        f"figures/{str(f.get('figure_id') or '').strip()}.png" not in figure_canvas_urls
+        for f in figures
+        if str(f.get("figure_id") or "").strip()
+    )
+    pdf_bytes: bytes | None = None
+    if needs_pdf and figures:
+        try:
+            pdf_bytes = await canvas.download_file(job.canvas_file_id)
+        except Exception:  # noqa: BLE001
+            logger.exception(
+                "Bridge: PDF download failed for figure extraction (job %s, file %s)",
+                job.reflow_job_id, job.canvas_file_id,
+            )
+
     for fig in figures:
         fid = str(fig.get("figure_id") or "").strip()
         src = str(fig.get("url") or "").strip()
@@ -457,15 +479,38 @@ async def _drive_job(
         # neighbour's). ``ref`` stays the per-document markdown key.
         canvas_fig_name = f"{job.canvas_file_id}-{fid}.png"
         try:
-            fetch_url = rewrite_presigned_url(src)
-            async with httpx.AsyncClient(timeout=60.0) as hc:
-                img_resp = await hc.get(fetch_url, follow_redirects=True)
-            img_resp.raise_for_status()
+            # Prefer the PDF-extracted bytes (no vision-pipeline grid).
+            # Fall back to Reflow's S3 PNG when the figure isn't an
+            # embedded raster (e.g., a vector chart) — better to ship
+            # the gridded copy than to drop the figure entirely.
+            figure_bytes: bytes | None = None
+            content_type = "image/png"
+            if pdf_bytes is not None:
+                from ..canvas.pdf_figures import (
+                    PdfFigureNotFound,
+                    extract_figure_for_reflow_id,
+                )
+                try:
+                    extracted = extract_figure_for_reflow_id(pdf_bytes, figures, fid)
+                    figure_bytes = extracted.image_bytes
+                    content_type = extracted.content_type
+                except PdfFigureNotFound as exc:
+                    logger.info(
+                        "Bridge: PDF extraction skipped for job %s fig %s: %s",
+                        job.reflow_job_id, fid, exc,
+                    )
+            if figure_bytes is None:
+                fetch_url = rewrite_presigned_url(src)
+                async with httpx.AsyncClient(timeout=60.0) as hc:
+                    img_resp = await hc.get(fetch_url, follow_redirects=True)
+                img_resp.raise_for_status()
+                figure_bytes = img_resp.content
+
             uploaded = await canvas.upload_course_file(
                 job.canvas_course_id,
                 canvas_fig_name,
-                img_resp.content,
-                content_type="image/png",
+                figure_bytes,
+                content_type=content_type,
                 folder_path=_FIGURE_FOLDER,
             )
             canvas_url = str(uploaded.get("url") or "")

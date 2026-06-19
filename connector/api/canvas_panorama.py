@@ -359,41 +359,80 @@ async def alt_figure_proxy(
     figure_ref: str,
     redis: Redis = Depends(get_redis_client),
 ) -> Response:
+    """Same-origin proxy for figure images embedded in rendered HTML.
+
+    Source priority:
+
+      1. PDF embedded raster (clean, original, no vision-pipeline grid).
+         This is the default because Reflow's S3-stored PNG carries a
+         tile/segmentation grid baked in from the vision step.
+      2. Canvas-uploaded URL (after the bridge has re-uploaded with the
+         clean bytes — also clean by then). Used if PDF extraction
+         couldn't match (e.g., vector figure).
+      3. Reflow's original S3 PNG (gridded). Last-resort fallback; the
+         page renders but with the cosmetic regression.
+    """
     job = await get_job(redis, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="Unknown job")
 
-    # Prefer the Canvas-uploaded URL if the bridge succeeded for this
-    # figure on a previous tick — saves a round-trip through S3 and
-    # matches what the rendered Canvas Page would be using.
-    canvas_map = (getattr(job, "figure_canvas_urls", None) or {})
-    canvas_url = canvas_map.get(f"figures/{figure_ref}") or canvas_map.get(
-        f"figures/{figure_ref}.png"
-    )
-    target_url: str | None = canvas_url
+    wanted_id = figure_ref.rsplit(".", 1)[0]  # strip ``.png`` if present
 
-    if target_url is None:
-        # Fall back to the Reflow S3 URL. Matching strips the ``.png``
-        # extension because the rendered HTML's ref shape varies between
-        # ``figure-3`` and ``figure-3.png`` depending on which pipeline
-        # produced the markdown.
-        from ..canvas.reflow_client import ReflowClient, rewrite_presigned_url
+    from ..canvas.reflow_client import ReflowClient, rewrite_presigned_url
 
-        reflow = ReflowClient()
+    reflow = ReflowClient()
+    try:
+        status = await reflow.get_status(job_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Figure proxy: reflow status fetch failed for %s: %s", job_id, exc)
+        raise HTTPException(status_code=502, detail="Could not reach Reflow") from exc
+    figures = status.get("figures") or status.get("stored_figures") or []
+
+    # 1. PDF-direct extraction (preferred — clean bytes from the source).
+    from ..workers.reflow_bridge_worker import _canvas_client_for_job
+
+    try:
+        canvas = await _canvas_client_for_job(redis, job)
+        pdf_bytes = await canvas.download_file(job.canvas_file_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "Figure proxy: PDF download failed for job %s file %s: %s",
+            job_id, job.canvas_file_id, exc,
+        )
+        pdf_bytes = None
+
+    if pdf_bytes:
+        from ..canvas.pdf_figures import (
+            PdfFigureNotFound,
+            extract_figure_for_reflow_id,
+        )
+
         try:
-            status = await reflow.get_status(job_id)
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("Figure proxy: reflow status fetch failed for %s: %s", job_id, exc)
-            raise HTTPException(status_code=502, detail="Could not reach Reflow") from exc
-        wanted = figure_ref.rsplit(".", 1)[0]
-        figures = status.get("figures") or status.get("stored_figures") or []
+            extracted = extract_figure_for_reflow_id(pdf_bytes, figures, wanted_id)
+            return Response(
+                content=extracted.image_bytes,
+                media_type=extracted.content_type,
+            )
+        except PdfFigureNotFound as exc:
+            logger.info(
+                "Figure proxy: PDF extraction skipped for %s ref %s: %s",
+                job_id, figure_ref, exc,
+            )
+
+    # 2. Canvas-uploaded URL fallback.
+    canvas_map = (getattr(job, "figure_canvas_urls", None) or {})
+    target_url = canvas_map.get(f"figures/{wanted_id}.png") or canvas_map.get(
+        f"figures/{wanted_id}"
+    )
+
+    # 3. Reflow S3 URL — last resort, may still carry the grid overlay.
+    if not target_url:
         for fig in figures:
-            fid = str(fig.get("figure_id") or "").strip()
-            if fid == wanted:
+            if str(fig.get("figure_id") or "").strip() == wanted_id:
                 target_url = rewrite_presigned_url(str(fig.get("url") or ""))
                 break
-        if not target_url:
-            raise HTTPException(status_code=404, detail="Figure not found for this job")
+    if not target_url:
+        raise HTTPException(status_code=404, detail="Figure not found for this job")
 
     import httpx
 
@@ -403,7 +442,7 @@ async def alt_figure_proxy(
         resp.raise_for_status()
     except Exception as exc:  # noqa: BLE001
         logger.warning(
-            "Figure proxy: fetch failed for job %s ref %s: %s",
+            "Figure proxy: fallback fetch failed for job %s ref %s: %s",
             job_id, figure_ref, exc,
         )
         raise HTTPException(status_code=502, detail="Figure fetch failed") from exc
