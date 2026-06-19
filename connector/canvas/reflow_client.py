@@ -166,47 +166,88 @@ class ReflowClient:
     ) -> dict[str, Any]:
         """Forward a faculty PII approve/deny decision to Reflow Core.
 
-        Maps ``decision`` ("approved"/"denied") onto either
-        ``POST /api/v1/documents/{job_id}/pii/approve`` or
-        ``POST /api/v1/documents/{job_id}/pii/deny``. Both accept JSON
-        ``{justification, reviewed_by}`` and return Reflow Core's
-        post-transition status payload.
+        Reflow Core's PII gate is approval-token-based: when the job
+        pauses at ``awaiting_approval``, the status payload exposes an
+        ``approval_token`` plus a ready-to-POST ``approval_url``
+        (``/api/v1/approval/{token}/decision``). That's the URL we hit
+        — there is NO ``/api/v1/documents/{job}/pii/approve`` in Core
+        (the connector used to assume there was; Core returned 405
+        Method Not Allowed and the panorama overlay's ``fetch`` came
+        back as "Failed to fetch" through the CORS error path).
 
-        Raises ``ReflowApiError`` for 4xx/5xx. A 404 specifically signals
-        that the running Reflow Core does not expose the PII decision
-        endpoint yet — a small upstream PR adds it (see PORTING_BRIEF.md
-        "After push: small Core Reflow PRs"). Callers should surface this
-        to the operator rather than swallowing it.
+        Payload shape mirrors what Core's approval router accepts:
+        ``{decision, justification, reviewed_by}`` with decision
+        being "approved" or "denied".
+
+        Raises ``ReflowApiError`` for 4xx/5xx, including:
+          * 404 when the job has no current approval token (already
+            decided, expired, or never paused on PII).
+          * 409 when the job already advanced past awaiting_approval
+            (parallel-tab race).
         """
 
         if decision not in ("approved", "denied"):
             raise ValueError(f"decision must be 'approved' or 'denied', got {decision!r}")
-        path = "approve" if decision == "approved" else "deny"
-        url = f"{self.base_url}/api/v1/documents/{job_id}/pii/{path}"
-        payload = {"justification": justification, "reviewed_by": reviewed_by}
+
+        # Fetch the job status to pull the current approval token.
+        # The token is single-use + time-limited, so we don't cache it.
+        status_url = f"{self.base_url}/api/v1/documents/{job_id}"
+        async with httpx.AsyncClient(timeout=self._timeout) as client:
+            status_resp = await client.get(status_url, headers=self._headers)
+        if status_resp.status_code == 404:
+            raise ReflowApiError(
+                f"Reflow Core has no record of job {job_id}", status_code=404,
+            )
+        if status_resp.is_error:
+            raise ReflowApiError(
+                f"Reflow Core status fetch returned "
+                f"{status_resp.status_code}: {status_resp.text[:200]}",
+                status_code=status_resp.status_code,
+            )
+        status = status_resp.json()
+        approval_token = (
+            status.get("approval_token")
+            or (status.get("approval") or {}).get("token")
+        )
+        if not approval_token:
+            # The job is no longer awaiting approval — typical race
+            # cause is a parallel-tab approval that already moved the
+            # job to ``processing``. Surface as 409 so the handler
+            # tells faculty the right thing.
+            raise ReflowApiError(
+                f"Job {job_id} has no current approval token "
+                f"(status: {status.get('status')!r}). "
+                "It may have already been decided in another tab, "
+                "or the gate window may have expired.",
+                status_code=409,
+            )
+
+        decision_url = (
+            f"{self.base_url}/api/v1/approval/{approval_token}/decision"
+        )
+        payload = {
+            "decision": decision,
+            "justification": justification,
+            "reviewed_by": reviewed_by,
+        }
 
         async def _go() -> dict[str, Any]:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
-                resp = await client.post(url, headers=self._headers, json=payload)
+                resp = await client.post(decision_url, headers=self._headers, json=payload)
                 if resp.status_code == 404:
                     raise ReflowApiError(
-                        f"Reflow Core at {self.base_url} did not expose "
-                        f"POST /api/v1/documents/{job_id}/pii/{path}. "
-                        "The connector's PII decision flow needs that endpoint — "
-                        "see PORTING_BRIEF.md follow-up PRs.",
+                        "Reflow Core rejected the approval token "
+                        "(stale or already used).",
                         status_code=404,
                     )
                 if resp.status_code == 409:
-                    # Job already advanced past awaiting_approval (race with
-                    # another instructor approving in a parallel tab). Surface
-                    # the message text so the handler can return 409 to the UI.
                     raise ReflowApiError(
                         resp.text or "Job already past awaiting_approval",
                         status_code=409,
                     )
                 if resp.is_error:
                     raise ReflowApiError(
-                        f"Reflow Core PII {path} returned "
+                        f"Reflow Core approval decision returned "
                         f"{resp.status_code}: {resp.text[:200]}",
                         status_code=resp.status_code,
                     )
