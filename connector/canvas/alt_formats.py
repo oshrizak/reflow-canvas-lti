@@ -445,7 +445,17 @@ def render_tagged_pdf(rendered: RenderedPage, *, base_url: str | None = None) ->
 
     html_doc = html_full_document(rendered)
     html_doc = mathify_html(html_doc)
-    return HTML(string=html_doc, base_url=base_url).write_pdf()
+    # ``pdf_variant='pdf/ua-1'`` is what actually emits the structure
+    # tree (StructTreeRoot, StructElem for H1/H2/P/Figure/Table, etc.)
+    # plus the /MarkInfo and /DisplayDocTitle catalog entries Acrobat
+    # checks for in its Accessibility report. WITHOUT this flag,
+    # WeasyPrint produces a regular PDF — no tags — and Acrobat shows
+    # "No tags available" in the Accessibility panel. The flag must be
+    # passed as a direct kwarg, not via an ``options=`` dict, since
+    # the latter is silently dropped as "Unknown rendering option".
+    return HTML(string=html_doc, base_url=base_url).write_pdf(
+        pdf_variant="pdf/ua-1",
+    )
 
 
 def render_ocr_pdf(original_pdf_bytes: bytes, archival: bool = True) -> bytes:
