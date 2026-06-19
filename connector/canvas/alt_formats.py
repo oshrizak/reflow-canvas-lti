@@ -373,6 +373,76 @@ def _escape(s: str) -> str:
     )
 
 
+def pdf_has_text_layer(pdf_bytes: bytes) -> bool:
+    """True when at least one page in the source PDF carries selectable text.
+
+    Used to decide whether ``Searchable PDF`` should run OCR (image-only
+    scan) or render a Tagged PDF from the canonical HTML (born-digital
+    PDF that already has text but no structure). The distinction matters:
+    running ocrmypdf on a born-digital PDF is a no-op (the output is
+    essentially the input back), and the Tagged PDF path produces a
+    properly structured document instead.
+
+    Cheap: ``page.get_text()`` returns the existing text layer without
+    re-extracting it.
+    """
+    try:
+        import fitz
+    except ImportError:
+        # PyMuPDF missing → can't classify; assume image-only and let
+        # the OCR path try its best.
+        return False
+    doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+    try:
+        for i in range(doc.page_count):
+            if doc[i].get_text().strip():
+                return True
+        return False
+    finally:
+        doc.close()
+
+
+def render_tagged_pdf(rendered: RenderedPage, *, base_url: str | None = None) -> bytes:
+    """Render the canonical accessible HTML into a tagged PDF.
+
+    Why this and not just OCR: when the source PDF already has a text
+    layer (born-digital from Word/InDesign/LaTeX), running ocrmypdf
+    against it adds nothing — the output is effectively the input back.
+    What faculty actually want for accessibility is a PDF with a real
+    structure tree (heading levels, reading order, alt text on
+    figures, language markers). That's what WeasyPrint produces from
+    the canonical HTML.
+
+    ``base_url`` is the URL the embedded ``<img>`` tags resolve
+    against. Pass the route serving the rendered HTML so figure refs
+    like ``figures/figure-3.png`` reach the connector's figure proxy.
+
+    Raises ``RuntimeError`` with an actionable message when WeasyPrint
+    or its native deps aren't installed, so the endpoint can 503
+    cleanly instead of crashing.
+    """
+    try:
+        from weasyprint import HTML
+    except ImportError as exc:
+        raise RuntimeError(
+            "weasyprint is not installed; add 'weasyprint' to "
+            "dependencies and rebuild the image."
+        ) from exc
+    except OSError as exc:  # native deps (cairo/pango/etc.) missing
+        raise RuntimeError(
+            f"WeasyPrint native dependency missing: {exc}. "
+            "The Dockerfile must install libpango / libcairo / "
+            "libgdk-pixbuf system libraries."
+        ) from exc
+
+    # ``html_full_document`` auto-enables MathJax when math is detected,
+    # but WeasyPrint doesn't execute JavaScript — math will appear as
+    # the literal LaTeX source. That's an acceptable trade-off for
+    # textual fidelity; the structure tree is the win we're after.
+    html_doc = html_full_document(rendered)
+    return HTML(string=html_doc, base_url=base_url).write_pdf()
+
+
 def render_ocr_pdf(original_pdf_bytes: bytes, archival: bool = True) -> bytes:
     """OCR the original source PDF, returning a SEARCHABLE PDF.
 

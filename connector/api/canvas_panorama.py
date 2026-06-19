@@ -456,6 +456,7 @@ async def alt_figure_proxy(
 async def alt_format(
     job_id: str,
     fmt: str,
+    request: Request,
     preview: bool = Query(default=False),
     redis: Redis = Depends(get_redis_client),
     session_id: str | None = Cookie(default=None, alias=SESSION_COOKIE),
@@ -570,25 +571,53 @@ async def alt_format(
         )
 
     if fmt == "ocr" or fmt == "pdf-tagged":
-        # Searchable (OCR) PDF. Operates on the original PDF bytes, fetched
-        # from Canvas via the source file id stored on the job. ``pdf-tagged``
-        # is accepted as a legacy alias for the same output (older page stubs
-        # / cached links may still request it).
+        # "Searchable PDF" is a slightly misleading legacy name — the
+        # endpoint produces an accessible PDF using whichever tool is
+        # right for the input:
+        #   * Image-only scan -> ocrmypdf adds a text layer (still no
+        #     structure tree, but at least it's searchable).
+        #   * Born-digital (text already present) -> WeasyPrint renders
+        #     the canonical accessible HTML into a tagged PDF with
+        #     headings, reading order, and alt text. Running ocrmypdf
+        #     against this input is a no-op (the output is the input
+        #     back), so the Tagged path is the real accessibility win.
+        # ``pdf-tagged`` stays as an alias for cached links.
         if not job.canvas_file_id:
             raise HTTPException(status_code=409, detail="No source file id on job")
-        # Use the instructor's OAuth token (same per-job client the bridge
-        # and figure proxy use) — Canvas Cloud rejects bare API tokens for
-        # /files/:id, and the legacy ``CanvasClient()`` constructor 500'd
-        # whenever ``CANVAS_API_TOKEN`` wasn't set (i.e., on every install
-        # past Phase 8). The helper falls back through user → owner →
-        # service → env-token, matching what the rest of the connector
-        # already trusts.
         from ..workers.reflow_bridge_worker import _canvas_client_for_job
         canvas = await _canvas_client_for_job(redis, job)
         try:
             pdf_bytes = await canvas.download_file(str(job.canvas_file_id))
         except Exception as exc:
             raise HTTPException(status_code=502, detail=f"Could not fetch source PDF: {exc}") from exc
+
+        from ..canvas.alt_formats import pdf_has_text_layer, render_tagged_pdf
+
+        if pdf_has_text_layer(pdf_bytes):
+            # Born-digital. Render the accessible HTML to a tagged PDF.
+            # Pass a base_url so relative figure refs in the rendered
+            # HTML resolve against the same alt-route the connector
+            # already serves figures from.
+            scheme = request.url.scheme
+            host = request.url.netloc
+            base_url = f"{scheme}://{host}/canvas/panorama/alt/{job_id}/"
+            try:
+                tagged = render_tagged_pdf(rendered, base_url=base_url)
+            except RuntimeError as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+            return Response(
+                tagged,
+                media_type="application/pdf",
+                headers={
+                    "Content-Disposition":
+                    f"attachment; filename=\"{_safe(job.canvas_file_name)}.tagged.pdf\"",
+                },
+            )
+
+        # Image-only scan. ocrmypdf adds a text layer. Output is
+        # searchable; it's not PDF/UA-tagged but it's the best we can
+        # do without the canonical HTML to derive structure from
+        # (which doesn't exist for scan-only inputs).
         try:
             ocr_pdf = render_ocr_pdf(pdf_bytes, archival=True)
         except RuntimeError as exc:

@@ -23,6 +23,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         # natural upgrade path for math/chemistry Braille (MathML in →
         # Nemeth out) and the install is cheap.
         liblouisutdml-bin \
+        # WeasyPrint runtime: Cairo for PDF rendering, Pango for text
+        # shaping, GDK-Pixbuf for raster images embedded in the source
+        # HTML. With these the Tagged PDF path produces a structured
+        # PDF (headings, reading order, alt text) from the canonical
+        # accessible HTML.
+        libpango-1.0-0 \
+        libpangoft2-1.0-0 \
+        libcairo2 \
+        libgdk-pixbuf-2.0-0 \
+        libharfbuzz0b \
+        libffi8 \
     && rm -rf /var/lib/apt/lists/*
 
 # Install VeraPDF — the official PDF/UA-1 (WCAG-mapped) accessibility
