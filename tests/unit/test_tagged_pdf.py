@@ -77,6 +77,80 @@ def test_render_tagged_pdf_emits_pdf_ua_structure_tree() -> None:
         assert "L" in tags_found, f"no L (list) in struct tree (found: {tags_found})"
 
 
+@pytest.mark.unit
+def test_standalone_figures_are_siblings_of_paragraphs_not_children() -> None:
+    """PDF/UA-1 requires standalone figures to sit at the same level as
+    paragraphs in the structure tree. CommonMark wraps a markdown
+    standalone image in a ``<p>`` and that maps to ``Figure`` nested
+    inside ``P`` — the renderer post-processes to ``<figure>`` to put
+    it at the right level. This guards that mapping survives all the
+    way through to the PDF."""
+    # 1x1 transparent PNG as a data URI keeps the test offline and
+    # deterministic — using a placeholder URL added a network dependency
+    # (CI runners block egress) and the SSL handshake would fail.
+    tiny_png = (
+        "data:image/png;base64,"
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAA"
+        "C0lEQVR42mNgAAIAAAUAAarVyFEAAAAASUVORK5CYII="
+    )
+    page = RenderedPage(
+        title="Figure placement test",
+        html=(
+            "<p>Some prose paragraph.</p>"
+            f"<figure><img src='{tiny_png}' alt='caption'></figure>"
+            "<p>Another paragraph.</p>"
+        ),
+    )
+    pdf_bytes = render_tagged_pdf(page)
+    with pikepdf.open(io.BytesIO(pdf_bytes)) as pdf:
+        struct_root = pdf.Root["/StructTreeRoot"]
+        # Walk top-level structure elements and check the Figure parent
+        # is NOT a P element. (The Document is the only allowed parent.)
+        figure_parents = _find_parents_of(struct_root, child_tag="Figure")
+        assert figure_parents, "no Figure found in structure tree"
+        assert "P" not in figure_parents, (
+            f"Figure nested inside P (parents found: {figure_parents}) — "
+            "the standalone-image-to-figure promotion regressed"
+        )
+
+
+def _find_parents_of(
+    obj, *, child_tag: str, depth: int = 0, parents: set[str] | None = None
+) -> set[str]:
+    """Walk the tree collecting the ``/S`` of every node that has at
+    least one direct child with structure type ``child_tag``."""
+    if parents is None:
+        parents = set()
+    if depth > 50:
+        return parents
+    try:
+        children = obj.get("/K")
+        if children is None:
+            return parents
+        # ``/K`` may be a single Dictionary, a single int (MCID), or an
+        # Array; pikepdf.Array isn't a Python list so a plain
+        # ``isinstance(_, list)`` check would skip iteration. Normalize
+        # via ``iter`` and ignore non-iterables.
+        try:
+            iter(children)
+            iterable = list(children) if not isinstance(children, pikepdf.Dictionary) else [children]
+        except TypeError:
+            iterable = [children]
+        for child in iterable:
+            if isinstance(child, pikepdf.Dictionary):
+                child_s = child.get("/S")
+                if child_s is not None and str(child_s).lstrip("/") == child_tag:
+                    parent_s = obj.get("/S")
+                    if parent_s is not None:
+                        parents.add(str(parent_s).lstrip("/"))
+                _find_parents_of(
+                    child, child_tag=child_tag, depth=depth + 1, parents=parents,
+                )
+    except (AttributeError, TypeError, KeyError):
+        pass
+    return parents
+
+
 def _collect_struct_tags(obj, depth: int = 0, found: set[str] | None = None) -> set[str]:
     """Walk the StructElem tree gathering every ``/S`` (structure type)."""
     if found is None:
@@ -87,7 +161,18 @@ def _collect_struct_tags(obj, depth: int = 0, found: set[str] | None = None) -> 
         s = obj.get("/S")
         if s is not None:
             found.add(str(s).lstrip("/"))
-        for child in obj.get("/K", []):
+        children = obj.get("/K")
+        if children is None:
+            return found
+        try:
+            iter(children)
+            iterable = (
+                list(children)
+                if not isinstance(children, pikepdf.Dictionary) else [children]
+            )
+        except TypeError:
+            iterable = [children]
+        for child in iterable:
             if isinstance(child, pikepdf.Dictionary):
                 _collect_struct_tags(child, depth + 1, found)
     except (AttributeError, TypeError, KeyError):

@@ -58,6 +58,7 @@ def render(
     # The str() coerces because mistune's type hint is a union (str | list)
     # even though the default renderer only ever returns str.
     html_core = str(mistune.html(body_md) or "")
+    html_core = _promote_standalone_images_to_figures(html_core)
 
     parts: list[str] = [BANNER_HTML, html_core]
     if original_pdf_url:
@@ -69,6 +70,34 @@ def render(
 
 
 _RELATIVE_IMG_RE = re.compile(r"!\[([^\]]*)\]\((?!https?://|/)([^)]+)\)")
+
+
+# Matches a paragraph whose only content is a single ``<img>`` — that's
+# what CommonMark emits for a markdown line that's "just an image"
+# (``![alt](src)`` on its own line). Whitespace around the img is
+# allowed. Inline images (image + surrounding text inside the same
+# ``<p>``) intentionally do NOT match.
+_STANDALONE_IMG_PARAGRAPH_RE = re.compile(
+    r"<p>\s*(<img\b[^>]*?/?>)\s*</p>",
+    re.IGNORECASE,
+)
+
+
+def _promote_standalone_images_to_figures(html: str) -> str:
+    """Rewrap a paragraph that's only an image as ``<figure><img></figure>``.
+
+    Why: CommonMark wraps any block-level "just an image" line in a
+    ``<p>``. WeasyPrint then maps the ``<img>`` to a PDF/UA ``Figure``
+    structure element nested INSIDE a ``P`` — which is wrong for
+    accessibility. Per PDF/UA-1, a standalone figure should sit at
+    the same level as paragraphs (``Figure`` as sibling of ``P``,
+    not its child). Acrobat's accessibility checker flags the nested
+    form, and screen readers can mis-announce reading order.
+
+    Inline images (image embedded in flowing prose) are left alone —
+    they SHOULD be ``Figure`` inside ``P`` per PDF/UA.
+    """
+    return _STANDALONE_IMG_PARAGRAPH_RE.sub(r"<figure>\1</figure>", html)
 
 
 def _rewrite_image_paths(markdown: str, base_url: str) -> str:
