@@ -72,7 +72,11 @@
     preview.src = `/canvas/review/${encodeURIComponent(jobId)}/canvas-page`;
     previewHeading.textContent = "Published Canvas page";
   } else if (jobId) {
-    preview.src = `/canvas/panorama/alt/${encodeURIComponent(jobId)}/html`;
+    // ``?preview=1`` bypasses the faculty-approval gate on the alt
+    // route — necessary here because the whole point of the review
+    // screen is to look at the artifact BEFORE approving it. The route
+    // already supports this query for the Alt Formats modal.
+    preview.src = `/canvas/panorama/alt/${encodeURIComponent(jobId)}/html?preview=1`;
   } else {
     statusEl.textContent = "No previewable content for this job yet.";
   }
