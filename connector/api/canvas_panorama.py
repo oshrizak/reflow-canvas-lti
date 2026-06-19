@@ -345,13 +345,17 @@ async def alt_format(
     fmt: str,
     preview: bool = Query(default=False),
     redis: Redis = Depends(get_redis_client),
+    session_id: str | None = Cookie(default=None, alias=SESSION_COOKIE),
 ) -> Response:
     """Serve any supported alternative format derived from the canonical HTML.
 
     Faculty-approval gate: only ``status == "published"`` jobs are visible to
-    students. Instructors can preview drafts by passing ``?preview=1`` from the
-    Alt Formats modal. The front-end sets this automatically when the current
-    user has an Instructor role.
+    students. Two bypasses for instructors viewing drafts:
+      * a valid LTI session cookie (the auth the review screen + LTI
+        dashboard already carry), or
+      * an explicit ``?preview=1`` query (used by the Files-overlay modal
+        from within Canvas where there's no LTI session cookie set).
+    The cookie path is preferred because it's real auth, not a hint.
     """
     job = await get_job(redis, job_id)
     if job is None:
@@ -363,7 +367,15 @@ async def alt_format(
     #   "awaiting_review"  — faculty needs to approve before students can see
     #   "published"        — approved, all alt formats live
     #   "rejected" | "failed" — terminal, never expose to students
-    if job.status != "published" and not preview:
+    has_instructor_session = False
+    if session_id and job.status != "published":
+        try:
+            session = await get_session(redis, session_id)
+        except Exception:  # noqa: BLE001
+            session = None
+        if session is not None and session.course_id == job.canvas_course_id:
+            has_instructor_session = True
+    if job.status != "published" and not preview and not has_instructor_session:
         msg = {
             "processing": "Reflow is still processing this document. Please check back shortly.",
             "awaiting_review": "This accessible version is pending faculty review.",
