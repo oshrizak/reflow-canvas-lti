@@ -16,6 +16,8 @@ or placeholder value is either a 503 in the UI or a security finding.
 | Variable | Required? | What breaks if missing |
 |---|---|---|
 | `REFLOW_API_KEY` | **Yes** | All document submissions 401 at Reflow Core. The placeholder `your-secret-key-here` is rejected unless your Reflow Core is also using it. |
+| `TOKEN_ENCRYPTION_KEY` | **Yes** | OAuth tokens (= instructor impersonation credentials) get encrypted with a hardcoded fallback key. Anyone with the source can decrypt your Redis dump. Generate with `python -m connector.tools.generate_keys`. |
+| `CSRF_SECRET_KEY` | **Yes** | CSRF tokens signed with a derivation of the LTI keypair fingerprint — stable but not a secret. Same generator. |
 | `LTI_CLIENT_ID` | **Yes** | Every LTI launch fails with `Unexpected audience` — pull from the Canvas Developer Key. |
 | `LTI_DEPLOYMENT_ID` | **Yes** | Every launch fails with `Unexpected deployment_id` — pull from Canvas's tool placement. Different per Canvas install of the same key. |
 | `LTI_PRIVATE_KEY_PATH` + the actual PEM at that path | **Yes** | JWT signing fails. Generate with `scripts/generate_lti_keys.sh`; mount under `/app/keys`. |
@@ -29,6 +31,29 @@ or placeholder value is either a 503 in the UI or a security finding.
 
 Run `git diff .env.example .env` after every dependency bump to catch
 new keys you haven't filled in.
+
+### Generating the cryptographic keys
+
+```bash
+docker compose run --rm connector python -m connector.tools.generate_keys
+```
+
+Prints `TOKEN_ENCRYPTION_KEY=…` and `CSRF_SECRET_KEY=…` lines using
+`secrets.token_urlsafe(32)` (256 bits of entropy each). Paste them
+into `.env` and `docker compose restart connector`.
+
+The startup logs include a `startup secrets audit` line — `OK` when
+everything's set, `CRITICAL` per missing secret otherwise. Grep for
+it after every release to verify a production deploy.
+
+### Key rotation
+
+* **TOKEN_ENCRYPTION_KEY rotation** invalidates every encrypted OAuth
+  token in Redis — faculty must re-consent on next launch. Plan a
+  maintenance window and post a notice to faculty before rotating.
+* **CSRF_SECRET_KEY rotation** invalidates outstanding CSRF tokens —
+  expected; clients re-fetch on the next state-changing call. Safe to
+  do in-place.
 
 ## Redis persistence + backups
 

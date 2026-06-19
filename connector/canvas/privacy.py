@@ -66,12 +66,20 @@ DEFAULT_RETENTION = RetentionPolicy()
 
 # -- Token encryption --------------------------------------------------------
 
+_constant_fallback_warned = False
+
+
 def _encryption_key() -> bytes:
     """Derive a stable 32-byte key from configured secrets.
 
     Preferred: explicit ``TOKEN_ENCRYPTION_KEY`` env. Fallback: derive
     from ``CSRF_SECRET_KEY`` via SHA-256. Either way the key never hits
     Redis and rotates with the underlying secret.
+
+    Last resort fallback: a hardcoded constant. ANY attacker with this
+    repo can decrypt your Redis dump in that mode — so we log a CRITICAL
+    once per process to make it impossible to miss in production logs.
+    Production deployments MUST set one of the two env vars.
     """
     explicit = os.environ.get("TOKEN_ENCRYPTION_KEY", "").strip()
     if explicit:
@@ -79,9 +87,17 @@ def _encryption_key() -> bytes:
     csrf = os.environ.get("CSRF_SECRET_KEY", "").strip()
     if csrf:
         return hashlib.sha256(("token:" + csrf).encode("utf-8")).digest()
-    # Last resort: derive from a fixed app constant. Stable, but the
-    # bar is "raises the cost of an attacker who already has Redis
-    # read access" -- not a true secret.
+    global _constant_fallback_warned
+    if not _constant_fallback_warned:
+        logger.critical(
+            "TOKEN_ENCRYPTION_KEY and CSRF_SECRET_KEY are BOTH unset. "
+            "OAuth tokens (instructor impersonation credentials) are now "
+            "being encrypted with a HARDCODED key any reader of this "
+            "source can derive. This is UNSAFE for production. Generate "
+            "a key with: python -m connector.tools.generate_keys "
+            "and paste the output into .env."
+        )
+        _constant_fallback_warned = True
     return hashlib.sha256(b"equalify-reflow:token-encryption:v1").digest()
 
 

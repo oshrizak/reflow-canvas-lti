@@ -41,6 +41,49 @@ logger = logging.getLogger("connector")
 _PANORAMA_JS_PATH = Path(__file__).resolve().parent / "web" / "canvas_review" / "panorama.js"
 
 
+def _audit_startup_secrets() -> None:
+    """Log a CRITICAL for every production-required secret that's unset.
+
+    These don't block startup — a dev environment can run fine with
+    placeholders — but production deployments should grep their startup
+    logs for ``CRITICAL`` after every release.
+    """
+    import os
+
+    findings: list[str] = []
+
+    # OAuth token encryption — the most directly exploitable miss.
+    if not os.environ.get("TOKEN_ENCRYPTION_KEY", "").strip() and not os.environ.get("CSRF_SECRET_KEY", "").strip():
+        findings.append(
+            "TOKEN_ENCRYPTION_KEY (and CSRF_SECRET_KEY fallback) UNSET — "
+            "instructor OAuth tokens encrypted with a hardcoded key; anyone with "
+            "this source can decrypt a Redis dump. Generate with "
+            "`python -m connector.tools.generate_keys` and set in .env."
+        )
+
+    # CSRF token signing — separate but related.
+    if not os.environ.get("CSRF_SECRET_KEY", "").strip():
+        findings.append(
+            "CSRF_SECRET_KEY UNSET — CSRF tokens are signed with a derivation "
+            "of the LTI keypair fingerprint, stable but not a secret. Set in .env."
+        )
+
+    # Reflow Core auth — every doc submission depends on this.
+    raw_key = os.environ.get("REFLOW_API_KEY", "").strip()
+    if not raw_key or raw_key == "your-secret-key-here":
+        findings.append(
+            "REFLOW_API_KEY UNSET or still the placeholder. Reflow Core will "
+            "401 every document submission. Set in .env."
+        )
+
+    if not findings:
+        logger.info("startup secrets audit: OK (no missing production secrets)")
+        return
+
+    for f in findings:
+        logger.critical("startup secrets audit: %s", f)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logging.basicConfig(
@@ -53,6 +96,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         settings.reflow_api_base_url,
         settings.lti_enabled,
     )
+
+    # Startup secrets audit — CRITICAL if anything that's required for
+    # production is unset. Doesn't block boot; an operator can still
+    # bring the connector up in dev with placeholders. The logs make
+    # it impossible to miss when reviewing a fresh deploy.
+    _audit_startup_secrets()
 
     # Use the shared connection pool the request-time dependency uses, so
     # workers and HTTP handlers share Redis connections instead of
