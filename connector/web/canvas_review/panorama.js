@@ -39,8 +39,12 @@
   // (dials disappear). Harmless on Cloudflare/other hosts (ignored), so it's
   // safe to always send.
   var BACKEND_HEADERS = { "ngrok-skip-browser-warning": "1" };
-  var COLORS = { "red": "#b00020", "amber": "#cc7a00", "green": "#2e7d32",
-                 "dark-green": "#155724", "unscanned": "#9aa0a6" };
+  // Colours tuned to meet WCAG 2.2 AA non-text contrast (3:1 vs row
+   // background) and text contrast (4.5:1 vs white) for the percentage
+   // label rendered inside the dial. ``amber`` darkened from #cc7a00
+   // (~4.36:1, fails AA) to #8a5500 (~6.2:1).
+  var COLORS = { "red": "#b00020", "amber": "#8a5500", "green": "#2e7d32",
+                 "dark-green": "#155724", "unscanned": "#6b7280" };
 
   // Catalogue of formats the modal shows. live=true means the backend
   // is wired; the rest are visible-but-disabled placeholders.
@@ -586,12 +590,12 @@
     btn.title = v.title;
     btn.setAttribute("aria-label", v.aria);
     btn.innerHTML =
-      '<svg viewBox="0 0 36 36" width="24" height="24" aria-hidden="true">' +
-      '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#e8eaed" stroke-width="2.8"/>' +
-      '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="' + color + '" stroke-width="2.8"' +
+      '<svg viewBox="0 0 36 36" width="36" height="36" aria-hidden="true">' +
+      '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="#d0d4d8" stroke-width="3"/>' +
+      '  <circle cx="18" cy="18" r="15.9155" fill="none" stroke="' + color + '" stroke-width="3"' +
       '          stroke-dasharray="' + score + ' ' + (100 - score) + '" stroke-dashoffset="25"' +
       '          stroke-linecap="round" transform="rotate(-90 18 18)"/>' +
-      '  <text x="18" y="21.5" text-anchor="middle" font-size="11" font-weight="600" font-family="system-ui,-apple-system,Segoe UI,sans-serif" fill="' + color + '">' + label + '</text>' +
+      '  <text x="18" y="22" text-anchor="middle" font-size="13" font-weight="700" font-family="system-ui,-apple-system,Segoe UI,sans-serif" fill="' + color + '">' + label + '</text>' +
       '</svg>';
     btn.addEventListener("click", function (e) {
       e.preventDefault(); e.stopPropagation();
@@ -1147,10 +1151,13 @@
       // pushing the next column.
       ".reflow-pn-wrap.reflow-pn-cell{position:absolute !important;top:50% !important;right:0.5rem !important;transform:translateY(-50%) !important;margin:0 !important;z-index:5 !important;pointer-events:none !important;display:inline-block !important;width:auto !important;}",
       ".reflow-pn-wrap.reflow-pn-cell .reflow-pn-dial{pointer-events:auto;}",
-      // New Files UI: dial sits inline in the actions column next to the
-      // 3-dot menu. Small top offset nudges the dial to align optically
-      // with the menu icon, which carries more vertical padding.
-      ".reflow-pn-wrap.reflow-pn-actions{display:inline-flex;align-items:center;flex-shrink:0;margin:0;}",
+      // New Files UI: dial floats absolutely in the inter-column gutter
+      // between Status and Actions so it doesn't displace the row's 3-dot
+      // menu. Top:50% + translateY(-50%) keeps it on the same baseline as
+      // every other icon in the row. Left is negative so the wrap escapes
+      // the actions cell's left edge into the gap.
+      ".reflow-pn-wrap.reflow-pn-actions{position:absolute !important;top:50% !important;left:-2.25rem !important;transform:translateY(-50%) !important;display:inline-flex !important;align-items:center !important;justify-content:center !important;margin:0 !important;z-index:5 !important;pointer-events:none !important;}",
+      ".reflow-pn-wrap.reflow-pn-actions .reflow-pn-dial{pointer-events:auto;}",
       ".reflow-pn-dial{background:transparent;border:0;padding:0;margin:0;cursor:pointer;display:inline-flex;align-items:center;justify-content:center;line-height:1;border-radius:50%;transition:transform 120ms,box-shadow 120ms;vertical-align:middle;}",
       ".reflow-pn-dial:hover{transform:scale(1.08);box-shadow:0 0 0 4px rgba(0,0,0,0.05);}",
       ".reflow-pn-dial:focus{outline:none;box-shadow:0 0 0 3px rgba(10,95,181,0.4);}",
@@ -1965,16 +1972,18 @@
       if (actionsCell) {
         wrap.className = "reflow-pn-wrap reflow-pn-actions";
         try {
-          // Make the actions cell layout side-by-side so the dial sits
-          // immediately before the row's existing menu button instead of
-          // overlaying it. Center the pair horizontally + vertically so
-          // they line up with the Status column's icon visually.
-          actionsCell.style.display = "flex";
-          actionsCell.style.alignItems = "center";
-          actionsCell.style.justifyContent = "center";
-          actionsCell.style.gap = "0.5rem";
+          // Anchor the dial inside the actions cell with absolute positioning
+          // so we DON'T disturb the cell's native flex layout for the 3-dot
+          // menu — pushing flex into the cell forced the menu off-center on
+          // file rows but not folder rows. With absolute positioning the
+          // dial floats into the inter-column gutter between Status and
+          // Actions and the menu stays right where Canvas put it.
+          if (getComputedStyle(actionsCell).position === "static") {
+            actionsCell.style.position = "relative";
+          }
+          actionsCell.style.overflow = "visible";
         } catch (e) { /* defensive */ }
-        actionsCell.insertBefore(wrap, actionsCell.firstChild);
+        actionsCell.appendChild(wrap);
         return;
       }
       var cell = findPositioningCell(entry.filenameSpan || entry.row, entry.row);
