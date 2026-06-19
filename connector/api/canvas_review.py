@@ -20,7 +20,6 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from redis.asyncio import Redis
 
-from ..canvas.client import CanvasClient
 from ..canvas.state import get_job, list_pending, put_job
 from ..dependencies import get_redis_client
 from ..lti.routes import SESSION_COOKIE

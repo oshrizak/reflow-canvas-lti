@@ -487,14 +487,14 @@ async def _drive_job(
             content_type = "image/png"
             if pdf_bytes is not None:
                 from ..canvas.pdf_figures import (
-                    PdfFigureNotFound,
+                    PdfFigureNotFoundError,
                     extract_figure_for_reflow_id,
                 )
                 try:
                     extracted = extract_figure_for_reflow_id(pdf_bytes, figures, fid)
                     figure_bytes = extracted.image_bytes
                     content_type = extracted.content_type
-                except PdfFigureNotFound as exc:
+                except PdfFigureNotFoundError as exc:
                     logger.info(
                         "Bridge: PDF extraction skipped for job %s fig %s: %s",
                         job.reflow_job_id, fid, exc,

@@ -26,9 +26,8 @@ import sys
 
 import httpx
 
-from ..canvas.client import CanvasClient
 from ..canvas.pdf_figures import (
-    PdfFigureNotFound,
+    PdfFigureNotFoundError,
     extract_figure_for_reflow_id,
 )
 from ..canvas.reflow_client import ReflowClient, rewrite_presigned_url
@@ -72,7 +71,7 @@ async def _reprocess_one(redis, job: CanvasJob) -> dict[str, int]:
             extracted = extract_figure_for_reflow_id(pdf_bytes, figures, fid)
             figure_bytes = extracted.image_bytes
             content_type = extracted.content_type
-        except PdfFigureNotFound as exc:
+        except PdfFigureNotFoundError as exc:
             logger.info("Job %s fig %s: PDF extraction skipped: %s",
                         job.reflow_job_id, fid, exc)
             counters["skipped_vector"] += 1

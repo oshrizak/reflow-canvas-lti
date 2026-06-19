@@ -20,7 +20,7 @@ This works for typical academic layouts. It will misfire when:
 
   * The figure is rendered as PDF vector ops (charts, line drawings)
     — there is no embedded raster to extract. The caller catches
-    ``PdfFigureNotFound`` and falls back to the upstream Reflow copy.
+    ``PdfFigureNotFoundError`` and falls back to the upstream Reflow copy.
   * A page has more figure-shaped rasters than Reflow reports (e.g.,
     decorative icons that Reflow filtered out). The reading-order
     sort then includes the decorations and the index lands on the
@@ -40,7 +40,7 @@ import fitz  # PyMuPDF
 logger = logging.getLogger(__name__)
 
 
-class PdfFigureNotFound(Exception):
+class PdfFigureNotFoundError(Exception):
     """No PDF raster could be matched for the requested Reflow figure id."""
 
 
@@ -81,7 +81,7 @@ def extract_figure_for_reflow_id(
             caller wants.
 
     Raises:
-        PdfFigureNotFound: The figure isn't in Reflow's list, its page
+        PdfFigureNotFoundError: The figure isn't in Reflow's list, its page
             metadata is missing, the page doesn't exist in the PDF, or
             no extractable raster was found at the expected reading-
             order position on that page.
@@ -94,12 +94,12 @@ def extract_figure_for_reflow_id(
         None,
     )
     if target is None:
-        raise PdfFigureNotFound(
+        raise PdfFigureNotFoundError(
             f"figure_id {requested_figure_id!r} not present in Reflow status"
         )
     page_num = int(target.get("page") or 0)
     if page_num < 1:
-        raise PdfFigureNotFound(
+        raise PdfFigureNotFoundError(
             f"figure {requested_figure_id!r} has no page metadata"
         )
 
@@ -114,14 +114,14 @@ def extract_figure_for_reflow_id(
             if str(f.get("figure_id") or "") == requested_figure_id
         )
     except StopIteration:  # pragma: no cover — by construction unreachable
-        raise PdfFigureNotFound(
+        raise PdfFigureNotFoundError(
             f"{requested_figure_id!r} dropped out of its own page bucket"
         ) from None
 
     doc = fitz.open(stream=pdf_bytes, filetype="pdf")
     try:
         if page_num > doc.page_count:
-            raise PdfFigureNotFound(
+            raise PdfFigureNotFoundError(
                 f"PDF has {doc.page_count} pages; Reflow expected page {page_num}"
             )
         page = doc[page_num - 1]
@@ -134,24 +134,26 @@ def extract_figure_for_reflow_id(
         all_imgs = page.get_image_info(xrefs=True)
 
         # Drop full-page background layers. Scanned PDFs commonly have
-        # the page itself as a giant image at (0, 0, page_w, page_h);
-        # that's never the figure the user means. Use a small slack to
-        # absorb floating-point jitter from PyMuPDF.
-        slack = 0.5
+        # the page itself as a giant image covering the whole page area;
+        # that's never the figure the user means. Use an area-based
+        # threshold (95% of the page) so we catch both
+        # ``bbox == (0, 0, page_w, page_h)`` and the centered-with-margins
+        # case (PyMuPDF preserves the source raster's aspect ratio when
+        # the placement rect doesn't match exactly, leaving a few-pixel
+        # margin that a strict bbox check would miss).
+        page_area = page_w * page_h
+        full_page_threshold = 0.95
         sub_region = [
             info for info in all_imgs
-            if not (
-                info["bbox"][0] <= slack
-                and info["bbox"][1] <= slack
-                and info["bbox"][2] >= page_w - slack
-                and info["bbox"][3] >= page_h - slack
-            )
+            if (info["bbox"][2] - info["bbox"][0])
+               * (info["bbox"][3] - info["bbox"][1])
+               < full_page_threshold * page_area
         ]
         # Reading order: top-to-bottom (y0), then left-to-right (x0).
         sub_region.sort(key=lambda info: (info["bbox"][1], info["bbox"][0]))
 
         if index_on_page >= len(sub_region):
-            raise PdfFigureNotFound(
+            raise PdfFigureNotFoundError(
                 f"page {page_num} has {len(sub_region)} extractable raster(s) "
                 f"but Reflow expected at least {index_on_page + 1} "
                 f"(for {requested_figure_id!r})"

@@ -143,6 +143,8 @@ module = [
     "bleach.*",
     "mistune.*",
     "lxml.*",
+    "fitz",
+    "fitz.*",
     "boto3",
     "boto3.*",
     "botocore.*",

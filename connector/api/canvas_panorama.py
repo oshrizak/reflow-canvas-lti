@@ -403,7 +403,7 @@ async def alt_figure_proxy(
 
     if pdf_bytes:
         from ..canvas.pdf_figures import (
-            PdfFigureNotFound,
+            PdfFigureNotFoundError,
             extract_figure_for_reflow_id,
         )
 
@@ -413,7 +413,7 @@ async def alt_figure_proxy(
                 content=extracted.image_bytes,
                 media_type=extracted.content_type,
             )
-        except PdfFigureNotFound as exc:
+        except PdfFigureNotFoundError as exc:
             logger.info(
                 "Figure proxy: PDF extraction skipped for %s ref %s: %s",
                 job_id, figure_ref, exc,
