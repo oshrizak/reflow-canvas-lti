@@ -47,7 +47,8 @@ connector consumes.
 - **Pending-scan marker** on rows the watcher hasn't picked up yet, so
   faculty isn't left wondering whether processing started.
 - **In-modal alt-format menu** grouped by purpose: Read, Listen &
-  translate, Document formats, Original. 11 formats total.
+  translate, Document formats. 10 generated formats; the original
+  source PDF stays in Canvas Files where faculty uploaded it.
 - **Per-document review screen** (`/canvas/review/{job}`) — side-by-side
   live PDF preview + accessible HTML (or live Canvas Page once
   published). Approve, reject, pull-back-to-draft, unpublish.
@@ -76,7 +77,6 @@ connector consumes.
 | Audio (MP3) | Amazon Polly | Requires `AWS_DEFAULT_REGION` + IAM credentials with `polly:SynthesizeSpeech` |
 | Translate | Anthropic Claude (Sonnet 4.5) | Requires `ANTHROPIC_API_KEY`. Prompt explicitly preserves LaTeX math and `\ce{}` chemistry markup verbatim. |
 | Braille (BRF) | liblouis | Auto-routes to Nemeth code (math/chemistry) or en-us-g2 (prose) based on document content |
-| Source File | passthrough | Original PDF, served via Canvas |
 
 ### Behind the scenes
 

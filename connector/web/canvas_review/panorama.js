@@ -55,14 +55,17 @@
   // (HTML preview, HTML-with-math, Translate output, Immersive Reader)
   // stay as ``target="_blank"`` so faculty actually see the rendered
   // page in a new tab.
-  // Groups organise the 11 alt-formats into mental buckets so the
-  // grid is scannable instead of a wall of squares. ``order`` matters
+  // Groups organise the alt-formats into mental buckets so the grid
+  // is scannable instead of a wall of squares. ``order`` matters
   // because the rendered sections follow this list top-to-bottom.
+  // The original source PDF lives in Canvas Files where faculty
+  // uploaded it — surfacing it again in this menu was confusing
+  // ("why does the accessible-formats menu offer me my original
+  // PDF?") so it's removed.
   var FORMAT_GROUPS = [
     { id: "read",      label: "Read"             },
     { id: "listen",    label: "Listen & translate" },
-    { id: "document",  label: "Document formats" },
-    { id: "original",  label: "Original"         }
+    { id: "document",  label: "Document formats" }
   ];
   var FORMATS = [
     { id: "html",      group: "read",     label: "Accessible HTML",    icon: "🌐", color: "#0a5fb5", live: true },
@@ -74,8 +77,7 @@
     { id: "immersive", group: "listen",   label: "Immersive Reader",   icon: "👁", color: "#5b3da6", live: true },
     { id: "ocr",       group: "document", label: "Searchable PDF",     icon: "🔎", color: "#cc7a00", live: true, download: true },
     { id: "epub",      group: "document", label: "ePub",               icon: "📚", color: "#0e7a8a", live: true, download: true },
-    { id: "braille",   group: "document", label: "Braille (BRF)",      icon: "⠿", color: "#5b3da6", live: true, download: true },
-    { id: "source",    group: "original", label: "Source File",        icon: "📄", color: "#0a5fb5", live: true }
+    { id: "braille",   group: "document", label: "Braille (BRF)",      icon: "⠿", color: "#5b3da6", live: true, download: true }
   ];
 
   // Language options for the Translate dialog. Covers CSUEB's largest
@@ -759,8 +761,7 @@
     var grid = modal.querySelector(".reflow-pn-modal-grid");
     var availableLive = payload.available_formats || ["html", "txt", "markdown"];
     function _buildFmtCard(fmt) {
-      var enabled = fmt.live && (fmt.id === "source"
-                                  || availableLive.indexOf(fmt.id) >= 0
+      var enabled = fmt.live && (availableLive.indexOf(fmt.id) >= 0
                                   || fmt.id === "translate"
                                   || fmt.id === "immersive"
                                   || fmt.id === "braille"
@@ -774,8 +775,6 @@
             e.preventDefault();
             openLanguagePicker(payload);
           });
-        } else if (fmt.id === "source") {
-          el.href = "#";
         } else {
           // If the job hasn't been approved yet, instructors can still preview.
           // Append ?preview=1 so the backend bypasses the published-only gate.
