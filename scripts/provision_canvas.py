@@ -176,6 +176,17 @@ def main() -> int:
         default="",
         help="resume with an existing key instead of creating a duplicate",
     )
+    ap.add_argument(
+        "--install-at",
+        choices=("course", "account"),
+        default="course",
+        help=(
+            "where to deploy. Some institutions block course-level installs "
+            "by client ID ('This app has been locked by an administrator'); "
+            "account-level often still works, and for a campus-wide tool is "
+            "arguably the right home anyway."
+        ),
+    )
     args = ap.parse_args()
 
     base = _env("CANVAS_BASE_URL").rstrip("/")
@@ -250,10 +261,17 @@ def main() -> int:
         )
         print("      account binding on")
 
-        print(f"[3/4] Deploying to course {course}...")
+        if args.install_at == "account":
+            scope = f"accounts/{account}"
+            where = f"account {account}"
+        else:
+            scope = f"courses/{course}"
+            where = f"course {course}"
+
+        print(f"[3/4] Deploying to {where}...")
         tool_obj = _check(
             client.post(
-                f"{base}/api/v1/courses/{course}/external_tools",
+                f"{base}/api/v1/{scope}/external_tools",
                 json={"client_id": client_id},
             ),
             "Install external tool",
@@ -265,7 +283,7 @@ def main() -> int:
         deployment_id = str(tool_obj.get("deployment_id") or "")
         if not deployment_id and tool_id:
             detail = _check(
-                client.get(f"{base}/api/v1/courses/{course}/external_tools/{tool_id}"),
+                client.get(f"{base}/api/v1/{scope}/external_tools/{tool_id}"),
                 "Fetch external tool",
             )
             deployment_id = str(detail.get("deployment_id") or "")
