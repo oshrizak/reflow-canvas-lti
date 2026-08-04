@@ -19,7 +19,6 @@ from __future__ import annotations
 import fakeredis.aioredis
 import pytest
 import pytest_asyncio
-
 from connector.canvas.state import (
     get_course_optin,
     get_file_alias,

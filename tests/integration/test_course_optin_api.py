@@ -10,7 +10,6 @@ be able to authorise processing of an entire course.
 from __future__ import annotations
 
 import pytest
-
 from connector.lti.routes import SESSION_COOKIE
 from connector.lti.session import SessionPayload, new_session_id, put_session
 

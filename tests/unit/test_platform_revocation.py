@@ -21,7 +21,6 @@ from __future__ import annotations
 import fakeredis.aioredis
 import pytest
 import pytest_asyncio
-
 from connector.lti.platform import build_install_from_launch
 from connector.lti.platform_store import (
     clear_revoked,
