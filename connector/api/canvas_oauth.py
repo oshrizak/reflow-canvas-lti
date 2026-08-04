@@ -29,6 +29,7 @@ from jwcrypto import jwk, jwt
 from redis.asyncio import Redis
 
 from ..canvas.user_oauth import (
+    USER_SCOPES,
     OAuthState,
     UserOAuthError,
     authorization_url,
@@ -54,29 +55,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/canvas/oauth", tags=["canvas-oauth"])
 
 
-# Scopes the tool requests on the user's behalf. These match the union
-# of what the watcher reads and what the bridge writes; user must have
-# permission in Canvas for each, otherwise the consent page lists fewer.
-_USER_SCOPES = [
-    "url:GET|/api/v1/courses/:course_id/files",
-    "url:GET|/api/v1/courses/:course_id/folders",
-    "url:GET|/api/v1/courses/:course_id/modules",
-    "url:GET|/api/v1/courses/:course_id/modules/:module_id/items",
-    "url:GET|/api/v1/courses/:course_id/pages",
-    "url:GET|/api/v1/courses/:course_id/pages/:url_or_id",
-    "url:GET|/api/v1/courses/:course_id/discussion_topics",
-    "url:GET|/api/v1/courses/:course_id/discussion_topics/:topic_id/entries",
-    "url:GET|/api/v1/courses/:course_id/assignments",
-    "url:GET|/api/v1/courses/:course_id/quizzes",
-    "url:GET|/api/v1/files/:id",
-    "url:GET|/api/v1/folders/:id/files",
-    "url:POST|/api/v1/courses/:course_id/pages",
-    "url:PUT|/api/v1/courses/:course_id/pages/:url_or_id",
-    "url:POST|/api/v1/conversations",
-    # Upload converted figures into a course folder so generated pages embed
-    # Canvas-hosted images (self-contained; no figure proxy).
-    "url:POST|/api/v1/courses/:course_id/files",
-]
+# The canonical list lives in ``connector.canvas.user_oauth`` because the
+# refresh path must send the identical set — see the note there. Aliased
+# rather than redefined so the two legs of the flow cannot drift apart.
+_USER_SCOPES = USER_SCOPES
 
 
 def _build_redirect_uri(request: Request) -> str:

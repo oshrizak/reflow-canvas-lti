@@ -65,6 +65,40 @@ USER_TOKEN_KEY = tk("lti:user-token:{platform_id}:{user_id}")
 # resume the journey to the review UI after consent.
 OAUTH_STATE_KEY = tk("lti:oauth-state:{state}")
 
+# Scopes the tool requests on the user's behalf: the union of what the
+# watcher reads and what the bridge writes. The user must hold the
+# matching permission in Canvas or the consent screen simply lists fewer.
+#
+# This list lives here, next to ``refresh_user_token``, rather than in the
+# API layer that first sends it — because BOTH the authorize request and
+# every subsequent refresh have to send exactly the same set. When Canvas
+# has "Enforce Scopes" turned on for the developer key and a refresh omits
+# ``scope``, Canvas issues a token carrying only the key's defaults. The
+# tool keeps working until the first refresh, then quietly loses the right
+# to write Canvas Pages — which reads like a locked page or a permissions
+# problem and sends you looking in entirely the wrong place. Keeping one
+# list and sending it on both legs is what stops that drift.
+USER_SCOPES = [
+    "url:GET|/api/v1/courses/:course_id/files",
+    "url:GET|/api/v1/courses/:course_id/folders",
+    "url:GET|/api/v1/courses/:course_id/modules",
+    "url:GET|/api/v1/courses/:course_id/modules/:module_id/items",
+    "url:GET|/api/v1/courses/:course_id/pages",
+    "url:GET|/api/v1/courses/:course_id/pages/:url_or_id",
+    "url:GET|/api/v1/courses/:course_id/discussion_topics",
+    "url:GET|/api/v1/courses/:course_id/discussion_topics/:topic_id/entries",
+    "url:GET|/api/v1/courses/:course_id/assignments",
+    "url:GET|/api/v1/courses/:course_id/quizzes",
+    "url:GET|/api/v1/files/:id",
+    "url:GET|/api/v1/folders/:id/files",
+    "url:POST|/api/v1/courses/:course_id/pages",
+    "url:PUT|/api/v1/courses/:course_id/pages/:url_or_id",
+    "url:POST|/api/v1/conversations",
+    # Upload converted figures into a course folder so generated pages embed
+    # Canvas-hosted images (self-contained; no figure proxy).
+    "url:POST|/api/v1/courses/:course_id/files",
+]
+
 _EXPIRY_BUFFER_SECONDS = 60
 _STATE_TTL_SECONDS = 600  # 10 min for the user to complete consent
 _HTTP_TIMEOUT_SECONDS = 10.0
@@ -262,6 +296,14 @@ async def refresh_user_token(
     Canvas reuses the same refresh_token across refreshes; we preserve
     the caller's existing refresh_token on the returned ``UserToken``
     if Canvas omits one in the response.
+
+    The request repeats ``scope``. Canvas does not carry the originally
+    consented scopes forward on a refresh when the developer key enforces
+    scopes — it grants the key's defaults instead — so a refresh without
+    ``scope`` hands back a progressively weaker token. The failure is
+    nasty precisely because it is delayed: everything works for an hour
+    after consent, then page writes start returning 403 and reads start
+    returning 401, with nothing in the request that looks wrong.
     """
     if bool(client_assertion) == bool(client_secret):
         raise UserOAuthError(
@@ -292,9 +334,32 @@ async def refresh_user_token(
         assert client_secret is not None
         data["client_secret"] = client_secret
 
-    fresh = await _post_token_endpoint(
-        platform, data, canvas_user_id=canvas_user_id
-    )
+    data["scope"] = " ".join(USER_SCOPES)
+
+    try:
+        fresh = await _post_token_endpoint(
+            platform, data, canvas_user_id=canvas_user_id
+        )
+    except UserOAuthError as exc:
+        # An install whose key grants a narrower set than we ask for gets
+        # ``invalid_scope`` rather than a reduced token. Retry once without
+        # ``scope`` so those deployments keep refreshing on whatever they
+        # were granted — a weaker token still beats a dead one, and the
+        # operator sees the reason in the log instead of a silent downgrade.
+        if "invalid_scope" not in str(exc):
+            raise
+        logger.warning(
+            "Refresh with explicit scope rejected for user=%s platform=%s "
+            "(%s); retrying without scope. The developer key grants fewer "
+            "scopes than the tool requests, so this token will be weaker "
+            "than the one issued at consent.",
+            canvas_user_id, platform.platform_id, exc,
+        )
+        data.pop("scope", None)
+        fresh = await _post_token_endpoint(
+            platform, data, canvas_user_id=canvas_user_id
+        )
+
     # Canvas omits the refresh_token on refresh; preserve the existing one.
     if not fresh.refresh_token:
         fresh.refresh_token = refresh_token
