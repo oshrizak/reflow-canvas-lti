@@ -146,18 +146,18 @@ app = FastAPI(
     title="Reflow Canvas LTI Connector",
     description=(
         "Canvas LTI 1.3 connector bridging Canvas LMS to the upstream Reflow Core "
-        "accessibility API. See PORTING_BRIEF.md for the architecture."
+        "accessibility API. See docs/ARCHITECTURE.md for the architecture."
     ),
     version="0.1.0",
     lifespan=lifespan,
 )
 
 # Canvas embeds the panorama bundle inside an iframe served from the
-# institutional Canvas origin (e.g. csueb.instructure.com) and makes
+# institutional Canvas origin (e.g. school.instructure.com) and makes
 # cross-origin fetches from there to the connector. Without explicit
 # CORS allow-origin headers the browser blocks every fetch — see the
-# /canvas/panorama/csrf, /canvas/consent/status, etc. failures during
-# CSUEB testing on 2026-06-18. Operators configure the allowlist via
+# /canvas/panorama/csrf, /canvas/consent/status, etc. failures observed
+# in early pilot testing. Operators configure the allowlist via
 # CANVAS_ALLOWED_ORIGINS (comma-separated) and optionally
 # CANVAS_ALLOWED_ORIGIN_REGEX for wildcard matches.
 _origins = [

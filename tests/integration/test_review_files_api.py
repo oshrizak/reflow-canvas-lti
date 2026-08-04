@@ -35,7 +35,7 @@ async def _session(redis) -> str:  # noqa: ANN001
         SessionPayload(
             user_id="u1",
             user_name="Zach",
-            user_email="zach@csueastbay.edu",
+            user_email="pat@example.edu",
             course_id=COURSE,
             roles=["http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor"],
         ),

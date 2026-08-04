@@ -181,7 +181,7 @@ def authorization_url(
     hosts for the two halves of the OAuth dance:
 
       * The user-facing **authorize page** lives on the institution's
-        host (e.g. ``csueb.test.instructure.com``) because that's
+        host (e.g. ``school.test.instructure.com``) because that's
         where the user is logged in and where their Canvas account +
         role permissions live. The SSO host
         (``canvas.test.instructure.com``) does not know the user's
@@ -373,10 +373,10 @@ async def _post_token_endpoint(
     canvas_user_id: str | None = None,
 ) -> UserToken:
     # Canvas Cloud's user-OAuth tokens are issued by the INSTITUTIONAL
-    # host (e.g. csueb.instructure.com/login/oauth2/token), not the SSO
+    # host (e.g. school.instructure.com/login/oauth2/token), not the SSO
     # host stored in platform.auth_token_url. Auth codes are scoped to
-    # the issuing tenant: a code from csueb.instructure.com/login/oauth2/auth
-    # can only be redeemed at csueb.instructure.com/login/oauth2/token,
+    # the issuing tenant: a code from school.instructure.com/login/oauth2/auth
+    # can only be redeemed at school.instructure.com/login/oauth2/token,
     # NOT at canvas.instructure.com (Free-for-Teacher host) or sso.canvaslms.com.
     # Derive the token URL from canvas_api_base so it always matches the
     # host that issued the auth code. Falls back to platform.auth_token_url

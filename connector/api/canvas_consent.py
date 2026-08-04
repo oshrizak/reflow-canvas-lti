@@ -32,6 +32,7 @@ from ..canvas.state import (
     put_consent,
     revoke_consent,
 )
+from ..config import settings
 from ..dependencies import get_redis_client
 from ..lti.routes import SESSION_COOKIE
 from ..lti.session import get_session
@@ -69,14 +70,31 @@ async def _current_session(
 # - ``Strict-Transport-Security`` is set only in production deployments
 #   (operators control this via a reverse proxy; we don't enforce here so
 #   localhost dev keeps working).
+def _frame_ancestors() -> str:
+    """Origins permitted to embed the consent page.
+
+    Canvas Cloud is always allowed. Anything else — a self-hosted Canvas on
+    an institutional domain, or a tunnel host during development — comes
+    from ``CONSENT_EXTRA_FRAME_ANCESTORS``, because hardcoding one
+    university's domains here makes the connector silently unusable at
+    every other institution: the consent page renders blank inside the
+    Canvas iframe with the reason buried in the browser console.
+    """
+    ancestors = ["https://*.instructure.com"]
+    extra = (getattr(settings, "consent_extra_frame_ancestors", "") or "").strip()
+    ancestors.extend(
+        origin.strip() for origin in extra.split(",") if origin.strip()
+    )
+    return " ".join(ancestors)
+
+
 CONSENT_SECURITY_HEADERS = {
     "Content-Security-Policy": (
         "default-src 'self'; "
         "style-src 'self' 'unsafe-inline'; "
         "script-src 'self' 'unsafe-inline'; "
         "img-src 'self' data:; "
-        "frame-ancestors https://*.instructure.com https://*.csueb.edu "
-        "https://*.csueastbay.edu https://*.ngrok-free.dev https://*.ngrok.io; "
+        f"frame-ancestors {_frame_ancestors()}; "
         "base-uri 'self'; "
         "form-action 'self'"
     ),
@@ -414,9 +432,9 @@ def _render_page(
         <label>
           <input type="checkbox" name="agree_pii" value="yes" required>
           <span>I understand that PII detection runs locally before content
-                leaves CSUEB systems, but I will avoid uploading documents
-                whose primary purpose is to convey sensitive personal data
-                (graded papers with feedback, rosters, etc.).</span>
+                leaves my institution's systems, but I will avoid uploading
+                documents whose primary purpose is to convey sensitive personal
+                data (graded papers with feedback, rosters, etc.).</span>
         </label>
         <label>
           <input type="checkbox" name="agree_responsibility" value="yes" required>

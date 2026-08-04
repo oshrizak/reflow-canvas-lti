@@ -602,13 +602,18 @@ async def _drive_job(
     #
     # This used to always publish a tiny stub that linked out to tool-served
     # HTML, on the belief that a Canvas Cloud edge WAF rejected Page writes
-    # above ~8KB. That was measured against csueb.instructure.com with
-    # scripts/probe_page_body_limit.py and turned out to be wrong: there is no
-    # WAF size rule on this path. The only ceiling is Canvas's own application
-    # limit of 511,999 characters, which returns a clean HTTP 400
-    # ("is too long (maximum is 511,999 characters)") rather than a CloudFront
-    # 403. At ~1.8KB of rendered HTML per PDF page that's roughly 280 pages, so
-    # essentially every real course document fits inline.
+    # above ~8KB. That turned out to be wrong: there is no WAF *size* rule on
+    # this path. The only ceiling is Canvas's own application limit of 511,999
+    # characters, which returns a clean HTTP 400 ("is too long (maximum is
+    # 511,999 characters)") rather than a CloudFront 403. At ~1.8KB of rendered
+    # HTML per PDF page that's roughly 280 pages, so essentially every real
+    # course document fits inline.
+    #
+    # Edge *content* rules are a different matter and do exist on some Canvas
+    # Cloud deployments — they reject the request before Canvas sees it and
+    # answer with an HTML 403 that is easily mistaken for a permissions error.
+    # See docs/TROUBLESHOOTING.md; the renderer already defuses the one
+    # signature we have hit in practice.
     #
     # Inline is strictly better for students: the accessible version IS the
     # Canvas Page, so it renders in the course, needs no new tab, works in the

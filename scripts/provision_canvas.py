@@ -30,11 +30,11 @@ It also never writes to ``.env``. It prints; you paste.
 
 Usage
 -----
-    export CANVAS_BASE_URL="https://csueb.instructure.com"
+    export CANVAS_BASE_URL="https://school.instructure.com"
     export CANVAS_ADMIN_TOKEN="<admin token>"
     export CANVAS_ACCOUNT_ID="1"
     export CANVAS_COURSE_ID="50594"
-    export TOOL_BASE_URL="https://accessibility-checker.csueastbay.edu"
+    export TOOL_BASE_URL="https://reflow.example.edu"
 
     python scripts/provision_canvas.py                       # dry run
     python scripts/provision_canvas.py --apply               # do it

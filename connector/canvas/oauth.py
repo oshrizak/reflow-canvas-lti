@@ -119,7 +119,7 @@ def _service_token_url(platform: PlatformInstall) -> str:
     Canvas Cloud issues LTI-Advantage service tokens from a shared SSO host
     per environment (``sso[.test|.beta].canvaslms.com``), NOT the regional
     ``*.instructure.com`` host used for launches and API calls -- even vanity
-    domains (e.g. ``csueb.test.instructure.com``) must go through the SSO
+    domains (e.g. ``school.test.instructure.com``) must go through the SSO
     host. The JWT bearer assertion's ``aud`` must equal this URL and the POST
     must go to it, or Canvas rejects with ``error='invalid_request'
     description="the 'aud' is invalid"``. Self-hosted Canvas co-locates the

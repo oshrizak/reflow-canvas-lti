@@ -27,7 +27,7 @@ async def _session(redis, roles: list[str]) -> str:
         SessionPayload(
             user_id="u1",
             user_name="Zach",
-            user_email="zach@csueastbay.edu",
+            user_email="pat@example.edu",
             course_id=COURSE,
             roles=roles,
         ),
@@ -52,7 +52,7 @@ async def test_instructor_can_enable_and_disable(client, redis_client):
     assert client.post(URL, json={"enabled": True}).status_code == 200
     after = client.get(URL).json()
     assert after["enabled"] is True
-    assert after["enabled_by"] == "zach@csueastbay.edu", (
+    assert after["enabled_by"] == "pat@example.edu", (
         "who authorised processing must be recorded, not anonymous"
     )
     assert after["enabled_at"] > 0

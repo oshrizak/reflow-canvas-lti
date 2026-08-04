@@ -76,6 +76,10 @@ WORKDIR /app
 # directory has to exist before ``pip install .`` runs.
 COPY pyproject.toml README.md ./
 COPY connector/ ./connector/
+# Operator tooling ships with the image: preflight validation and Canvas
+# provisioning are needed exactly where the connector runs, and a script
+# you cannot execute on the box is no use during an incident.
+COPY scripts/ ./scripts/
 
 RUN pip install --no-cache-dir --upgrade pip \
  && pip install --no-cache-dir .

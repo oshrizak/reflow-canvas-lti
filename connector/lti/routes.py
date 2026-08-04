@@ -191,7 +191,7 @@ async def launch(
         # Free-for-Teacher tenant, so auto-derivation from issuer ends up
         # pointing OAuth at FFT. If Canvas does send the `canvas_api_domain`
         # custom claim, it may carry the issuer-host (canvas.instructure.com)
-        # rather than the institutional host (csueb.instructure.com). When
+        # rather than the institutional host (school.instructure.com). When
         # CANVAS_API_URL is configured in .env, prefer it as the
         # authoritative institutional host so user-OAuth and REST calls
         # land on the tenant the operator actually deployed for.
@@ -429,7 +429,7 @@ async def tool_config(request: Request) -> JSONResponse:
             "custom_fields": {
                 "course_id": "$Canvas.course.id",
                 "user_id": "$Canvas.user.id",
-                # Institutional host (e.g. csueb.test.instructure.com). Canvas
+                # Institutional host (e.g. school.test.instructure.com). Canvas
                 # Cloud's LTI issuer is the shared SSO host, but the actual
                 # API host is the per-institution subdomain. We capture the
                 # subdomain via this substitution so platform records get the

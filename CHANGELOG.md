@@ -9,6 +9,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **Whole-course review screen** (`GET /canvas/review/api/files`). The review
+  page previously read only the pending set, so a document that was
+  converting, published or broken was invisible — it could not answer "where
+  is everything?", which is the question it gets opened to settle. One row per
+  Canvas file, with the live job winning over stale failures.
+- **`docs/TROUBLESHOOTING.md`** — production failure modes and how to tell
+  them apart, including CDN/WAF 403s that masquerade as permission errors.
+- **Working `scripts/preflight.py`** — validates `.env` before boot and names
+  the common first-run mistakes (missing key pair, placeholder client id,
+  trailing slash on `LTI_PUBLIC_URL`). Previously a stub that exited 1.
+- **`CONSENT_EXTRA_FRAME_ANCESTORS`** setting. The consent page's CSP
+  hardcoded one university's domains, which silently broke the page for every
+  other institution.
+
+### Fixed
+
+- **Token scope erosion on refresh.** Canvas does not carry consented scopes
+  across a refresh when the developer key enforces scopes; it substitutes the
+  key's defaults. The refresh grant now sends the full scope list, and that
+  list is a single shared object so the authorize and refresh legs cannot
+  drift apart. Symptom was a tool that worked for exactly one hour after each
+  consent, then 401'd on every read.
+- **IPv4 literals in generated pages.** A bare dotted quad anywhere in a page
+  body matches SSRF signatures in managed WAF rule sets, so Canvas Cloud's CDN
+  rejected the write before Canvas saw it — with an HTML 403 indistinguishable
+  from a permissions failure. Dots are now entity-encoded at render time;
+  links resolve and text reads identically.
+- **Canvas error bodies are logged.** `CanvasApiError` carries the response
+  body and non-404 failures log it at `WARNING`. It was previously `DEBUG`,
+  which left production logs showing a status code and nothing else.
+- **Deleted documents are forgotten.** When Canvas returns 404 for a source
+  file, the bridge purges the job record, review-queue entry, processed marker
+  and page mapping. Records used to outlive their source and retry forever.
+
+### Changed
+
+- Removed internal working documents (`FIXES.md`, `PORTING_BRIEF.md`) and
+  one-off diagnostic spikes from `scripts/`. Institution-specific hostnames in
+  comments and examples replaced with neutral placeholders.
+- `scripts/` now ships in the Docker image — operator tooling was previously
+  unrunnable in the container where it is needed.
+
 - **PDF figure extraction from the source PDF** (`connector/canvas/pdf_figures.py`,
   `connector/tools/reprocess_figures.py`). Bypasses Reflow's vision-pipeline
   S3 PNGs (which carry a tile/segmentation grid overlay) and pulls clean
@@ -135,9 +177,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Initial scaffold extracted from the `equalify-reflow` fork's working
-  Canvas LTI integration (validated end-to-end against CSU East Bay
-  Canvas on 2026-06-17). See `PORTING_BRIEF.md` for the phased porting
-  plan.
+  Canvas LTI integration (validated end-to-end against a production
+  Canvas instance on 2026-06-17). See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+  for the component map.
 
 ### Verified
 

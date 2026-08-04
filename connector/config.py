@@ -176,6 +176,18 @@ class Settings(BaseSettings):
         default="",
         description="Comma-separated Canvas origins allowed to call panorama endpoints.",
     )
+    consent_extra_frame_ancestors: str = Field(
+        default="",
+        description=(
+            "Comma-separated extra origins allowed to embed the consent page, "
+            "added to the default 'https://*.instructure.com'. Set this when "
+            "Canvas is self-hosted on your own domain, or when you front the "
+            "tool with a tunnel during development — e.g. "
+            "'https://*.example.edu,https://*.ngrok-free.dev'. Wrong or "
+            "missing values show up as a consent page that renders blank "
+            "inside the Canvas iframe."
+        ),
+    )
     canvas_allowed_origin_regex: str = Field(
         default="",
         description="Regex of Canvas origins allowed (takes precedence over ``canvas_allowed_origins``).",
@@ -234,10 +246,12 @@ class Settings(BaseSettings):
     # How large a converted document may be before the bridge stops writing it
     # inline into the Canvas Page and falls back to a link stub.
     #
-    # Canvas's hard application limit is 511,999 characters — measured against
-    # csueb.instructure.com with scripts/probe_page_body_limit.py, which returns
-    # HTTP 400 "is too long (maximum is 511,999 characters)". There is no ~8KB
-    # edge-WAF rule, contrary to an earlier assumption.
+    # Canvas's hard application limit is 511,999 characters, measured against a
+    # Canvas Cloud instance: past it Canvas returns HTTP 400 "is too long
+    # (maximum is 511,999 characters)". There is no edge size rule on this path
+    # — an earlier assumption of a ~8KB WAF cap was wrong. Some Canvas Cloud
+    # deployments do enforce *content* rules at the CDN; see
+    # docs/TROUBLESHOOTING.md.
     #
     # The default leaves ~22% headroom under that ceiling for markup the
     # renderer may add later. At roughly 1.8KB of HTML per PDF page this is

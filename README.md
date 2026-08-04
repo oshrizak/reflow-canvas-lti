@@ -134,6 +134,12 @@ cp .env.example .env
 # Generate the secrets:
 docker compose run --rm connector python -m connector.tools.generate_keys >> .env
 ./scripts/generate_lti_keys.sh
+
+# Check the configuration before booting — catches the common first-run
+# mistakes (missing key pair, placeholder client id, trailing slash on
+# LTI_PUBLIC_URL) with a readable message instead of a runtime failure.
+docker compose run --rm connector python scripts/preflight.py
+
 docker compose up
 ```
 
@@ -195,11 +201,15 @@ connector/
 ├── utils/               Cross-cutting helpers (rate_limit, retry_helpers)
 └── web/canvas_review/   Front-end (overlay JS, review HTML templates)
 
-docs/                    Architecture + ops + Reflow API contract docs
-scripts/                 LTI key generation, Redis backup
+docs/                    Architecture, setup, deploy, troubleshooting
+scripts/
+├── preflight.py         Validate .env before boot
+├── provision_canvas.py  Create + deploy the Canvas LTI developer key
+├── generate_lti_keys.sh LTI 1.3 key pair
+└── backup-redis.sh      Operator backup helper
 tests/
-├── unit/                Pure-logic tests (63)
-└── integration/         End-to-end LTI session + CSRF + rate-limit (6)
+├── unit/                Pure-logic tests
+└── integration/         End-to-end LTI session + CSRF + rate-limit
 ```
 
 ## Documentation index
@@ -215,6 +225,10 @@ tests/
 - [`docs/DEPLOY.md`](docs/DEPLOY.md) — image, env, networking, health.
 - [`docs/PILOT_RUNBOOK.md`](docs/PILOT_RUNBOOK.md) — end-to-end smoke
   test and the first-week failure modes.
+- [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — failure modes
+  seen in production and how to tell them apart. Read this first when a
+  Canvas call returns 403 or 401; several of them look like permissions
+  problems and are not.
 - [`CHANGELOG.md`](CHANGELOG.md) — released changes.
 
 ## License

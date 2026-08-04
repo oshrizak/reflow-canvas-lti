@@ -7,7 +7,7 @@ Key layout::
   eq-pdf:lti:platform:by-issuer:{issuer}   Set  → platform_ids at that issuer
 
 The by-issuer index lets future ops tooling enumerate "every platform
-installed at canvas.csueastbay.edu" without scanning every record. Right
+installed at canvas.example.edu" without scanning every record. Right
 now (Phase 1) it's just maintained for future use; nothing reads it
 yet.
 

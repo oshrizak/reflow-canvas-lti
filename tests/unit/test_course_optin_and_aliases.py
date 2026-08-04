@@ -53,13 +53,13 @@ async def test_course_is_disabled_by_default(redis):
 
 @pytest.mark.asyncio
 async def test_enabling_records_who_and_when(redis):
-    await set_course_enabled(redis, COURSE, enabled=True, actor="zach@csueastbay.edu")
+    await set_course_enabled(redis, COURSE, enabled=True, actor="pat@example.edu")
 
     assert await is_course_enabled(redis, COURSE) is True
 
     record = await get_course_optin(redis, COURSE)
     assert record is not None
-    assert record["actor"] == "zach@csueastbay.edu"
+    assert record["actor"] == "pat@example.edu"
     assert record["at"] > 0, "an ISO asking 'who authorised this' needs a timestamp"
 
 
