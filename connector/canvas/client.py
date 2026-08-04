@@ -729,8 +729,19 @@ class CanvasClient:
     def _raise_for_status(self, resp: httpx.Response, op: str) -> None:
         if resp.is_success:
             return
-        logger.debug("Canvas %s -> %d: %s", op, resp.status_code, resp.text[:500])
-        raise CanvasApiError(resp.status_code, f"{op} failed")
+        body = resp.text[:500]
+        # 404 is ordinary control flow here — "does this page exist yet?"
+        # — so it stays quiet. Everything else gets Canvas's own words at
+        # WARNING. This used to be DEBUG, which meant production logs
+        # showed a status code and nothing else, and the actual reason
+        # sat one log level out of reach during an outage.
+        if resp.status_code == 404:
+            logger.debug("Canvas %s -> 404: %s", op, body)
+        else:
+            logger.warning(
+                "Canvas %s -> %d: %s", op, resp.status_code, body
+            )
+        raise CanvasApiError(resp.status_code, f"{op} failed", body)
 
 
 def _next_link(link_header: str | None) -> str | None:

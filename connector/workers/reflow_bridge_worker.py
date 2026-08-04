@@ -684,20 +684,25 @@ async def _drive_job(
         )
     except CanvasApiError as exc:
         if exc.status_code in (401, 403):
-            # The conversion succeeded but Canvas rejected the page write —
-            # almost always the course-owner OAuth token missing the Pages
-            # write scope (url:POST|/api/v1/courses/:course_id/pages). DON'T
-            # advance to awaiting_review: that strands the job claiming success
-            # with no page ever created (the "pages never got made" bug). Mark
-            # it page_failed so the overlay shows the real reason; page_failed
-            # is pollable, so the next tick retries and the page self-heals once
-            # the scope is granted — no manual replay needed.
+            # The conversion succeeded but Canvas rejected the page write.
+            # DON'T advance to awaiting_review: that strands the job claiming
+            # success with no page ever created (the "pages never got made"
+            # bug). Mark it page_failed so the overlay shows the real reason;
+            # page_failed is pollable, so the next tick retries and the page
+            # self-heals once the underlying cause is fixed.
+            #
+            # This message used to assert a missing Pages scope as the cause.
+            # It is one cause among several — a locked page, a page the token
+            # may update but not create, a course-level restriction — and
+            # stating a guess as fact sent a whole afternoon's debugging in
+            # the wrong direction. Report what Canvas said and let the reader
+            # draw the conclusion.
             logger.warning(
-                "Canvas page write FAILED for job %s (status=%d): %s. "
-                "Marking page_failed — grant the OAuth token the Pages write "
-                "scope (url:POST|/api/v1/courses/:course_id/pages) and it will "
-                "rebuild automatically.",
-                job.reflow_job_id, exc.status_code, exc.message,
+                "Canvas page write FAILED for job %s (page=%s, status=%d): %s. "
+                "Canvas said: %s. Marking page_failed; it retries every tick "
+                "and republishes once the cause is resolved.",
+                job.reflow_job_id, page_ref, exc.status_code, exc.message,
+                exc.body or "(no response body)",
             )
             job.canvas_page_id = ""
             job.canvas_page_url = ""
