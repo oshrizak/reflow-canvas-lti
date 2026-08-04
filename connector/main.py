@@ -32,6 +32,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from connector.api import canvas_consent, canvas_oauth, canvas_panorama, canvas_review
 from connector.config import settings
 from connector.dependencies import _get_redis_pool
+from connector.logging_setup import configure_logging
 from connector.lti import router as lti_router
 from connector.workers.canvas_watcher import start_canvas_watcher
 from connector.workers.reflow_bridge_worker import start_reflow_bridge
@@ -86,10 +87,12 @@ def _audit_startup_secrets() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)s %(name)s %(message)s",
-    )
+    # connector.logging_setup implements JSON output and request/user/course
+    # context propagation, and docs/DEPLOY.md documents both — but nothing
+    # ever called it, so the connector emitted plain text and the context
+    # vars went nowhere. Wire it up here, where logging is configured once
+    # per process. Format follows LOG_FORMAT (json in production, text in dev).
+    configure_logging(settings.log_level)
     logger.info(
         "connector starting up — environment=%s reflow_api_base_url=%s lti_enabled=%s",
         settings.environment,

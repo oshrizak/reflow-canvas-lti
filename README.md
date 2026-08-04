@@ -157,6 +157,46 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 For an end-to-end smoke test against a local Reflow Core, see
 [`docs/PILOT_RUNBOOK.md`](docs/PILOT_RUNBOOK.md).
 
+## Deploying
+
+The connector is one container plus a Redis it owns. Full detail —
+image, secrets, networking, scaling, health checks — is in
+[`docs/DEPLOY.md`](docs/DEPLOY.md); the shape of it is:
+
+```bash
+# 1. On the host: clone, configure, generate keys
+git clone https://github.com/oshrizak/reflow-canvas-lti.git
+cd reflow-canvas-lti
+cp .env.example .env          # then fill it in — see docs/DEPLOY.md
+./scripts/generate_lti_keys.sh
+docker compose run --rm connector python -m connector.tools.generate_keys >> .env
+
+# 2. Verify the configuration before it matters
+docker compose run --rm connector python scripts/preflight.py
+
+# 3. Register the tool in Canvas (creates + deploys the Developer Key,
+#    prints the LTI_CLIENT_ID and LTI_DEPLOYMENT_ID to paste into .env)
+docker compose run --rm connector python scripts/provision_canvas.py --apply
+
+# 4. Boot
+docker compose up -d
+```
+
+Three things decide whether this works on the first try:
+
+- **`LTI_PUBLIC_URL` must be the public HTTPS URL Canvas will reach**, with
+  no trailing slash. Canvas validates the redirect URI against it exactly.
+- **Terminate TLS in front of the container.** Canvas will not launch a
+  tool over plain HTTP.
+- **An instructor must authorize the tool once per course** before anything
+  publishes. The watcher and bridge act as that user, not as the tool —
+  Canvas Cloud does not accept LTI Advantage tokens for the REST API.
+
+When something returns 403 or 401, read
+[`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) before changing
+scopes or keys. Several failures in this integration look like permission
+problems and are not.
+
 ## Configuration
 
 Every setting is documented in [`.env.example`](.env.example). Minimum

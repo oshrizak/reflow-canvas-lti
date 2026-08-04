@@ -124,6 +124,11 @@ def test_approve_without_csrf_does_not_change_state(
 
 
 @pytest.mark.integration
+# 31 full HTTP round trips against the app, each one logging, is not a 5-second
+# job on a loaded CI runner — the suite-wide timeout made this fail at random
+# and pass on rerun, which trains people to ignore red builds. The assertion
+# is about the limiter firing, not about speed.
+@pytest.mark.timeout(30)
 @respx.mock(assert_all_called=False)
 def test_approve_rate_limit_kicks_in_at_threshold(
     respx_mock, client, instructor_session, csrf_header, trusted_origin_headers, redis_client,

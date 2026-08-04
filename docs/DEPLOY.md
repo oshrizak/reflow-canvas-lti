@@ -9,6 +9,40 @@ that can reach:
 - A Redis the connector owns.
 - Reflow Core's S3 (presigned URL fetches).
 
+## First deploy, start to finish
+
+```bash
+git clone https://github.com/oshrizak/reflow-canvas-lti.git
+cd reflow-canvas-lti
+
+cp .env.example .env                    # fill in — see Environment below
+./scripts/generate_lti_keys.sh          # LTI 1.3 key pair into keys/
+docker compose run --rm connector python -m connector.tools.generate_keys >> .env
+
+# Catch configuration mistakes before they become runtime mysteries
+docker compose run --rm connector python scripts/preflight.py
+
+# Register the tool in Canvas. Creates the LTI Developer Key from the
+# tool's own /lti/config.json, enables it, binds it to the account and
+# deploys it, then prints LTI_CLIENT_ID and LTI_DEPLOYMENT_ID for .env.
+# Needs a Canvas admin token with manage_developer_keys; revoke it after.
+export CANVAS_BASE_URL="https://school.instructure.com"
+export CANVAS_ADMIN_TOKEN="<admin token>"
+export CANVAS_ACCOUNT_ID="1"
+export CANVAS_COURSE_ID="<a course to deploy into>"
+export TOOL_BASE_URL="https://reflow.example.edu"
+docker compose run --rm connector python scripts/provision_canvas.py --apply
+
+docker compose up -d
+docker compose run --rm connector python scripts/preflight.py   # re-verify
+```
+
+Canvas has no API for minting the second, non-LTI **API Key** used for
+per-instructor OAuth, and its secret is shown exactly once — so
+`CANVAS_OAUTH_CLIENT_ID` / `CANVAS_OAUTH_CLIENT_SECRET` stay a manual step.
+The provisioning script prints the URL and redirect URI to use.
+Full walkthrough: [`CANVAS_SETUP.md`](CANVAS_SETUP.md).
+
 ## Image
 
 ```bash
