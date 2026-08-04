@@ -297,6 +297,33 @@ async def list_pending(redis: Redis, course_id: str) -> list[CanvasJob]:
     return jobs
 
 
+async def purge_job(redis: Redis, job: CanvasJob) -> None:
+    """Forget a job and every trace that would resurrect or display it.
+
+    Used when the Canvas file behind a job is gone. Faculty who delete a
+    PDF expect it to disappear, so the record goes with it rather than
+    lingering as a row nobody can act on — and, more practically, the
+    bridge would otherwise retry a document that no longer exists until
+    someone noticed.
+
+    Four keys have to go together. Leaving the processed marker behind
+    would stop a re-upload of the same file from ever being picked up;
+    leaving the page mapping behind would aim a future conversion at a
+    page belonging to a deleted document.
+    """
+    course = job.canvas_course_id
+    await redis.delete(JOB_KEY.format(job_id=job.reflow_job_id))
+    await redis.srem(PENDING_KEY.format(course_id=course), job.reflow_job_id)
+    if job.canvas_file_id:
+        await redis.srem(PROCESSED_KEY.format(course_id=course), job.canvas_file_id)
+        await redis.delete(
+            FILE_PAGE_KEY.format(course_id=course, file_id=job.canvas_file_id)
+        )
+        await redis.delete(
+            FILE_ALIAS_KEY.format(course_id=course, file_id=job.canvas_file_id)
+        )
+
+
 async def list_course_jobs(redis: Redis, course_id: str) -> list[CanvasJob]:
     """Every bridge record belonging to one course, oldest first.
 

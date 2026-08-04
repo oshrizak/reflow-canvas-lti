@@ -26,6 +26,7 @@ from ..canvas.state import (
     CanvasJob,
     get_file_page,
     get_job,
+    purge_job,
     put_file_page,
     put_job,
 )
@@ -380,6 +381,25 @@ async def _drive_job(
     We intentionally never overwrite ``published`` or ``rejected`` —
     those are human-decided terminal states, see ``_BRIDGE_POLLABLE``.
     """
+    # A faculty member who deletes the PDF expects it gone. Without this
+    # check the record survives its source and the bridge keeps retrying a
+    # document that no longer exists — which is how a deleted file went on
+    # producing 403s every thirty seconds. Only an explicit 404 purges:
+    # a network blip or an expired token must never delete anyone's record.
+    if job.canvas_file_id:
+        try:
+            await canvas.get_file_metadata(job.canvas_file_id)
+        except CanvasApiError as exc:
+            if exc.status_code == 404:
+                logger.info(
+                    "Bridge: canvas file %s is gone; purging job %s (%s)",
+                    job.canvas_file_id, job.reflow_job_id, job.canvas_file_name,
+                )
+                await purge_job(redis, job)
+                return
+            # Anything else is a transient or auth problem. Leave the
+            # record alone and let the normal error handling below run.
+
     status = await reflow.get_status(job.reflow_job_id)
     state = (status.get("status") or "").lower()
 
