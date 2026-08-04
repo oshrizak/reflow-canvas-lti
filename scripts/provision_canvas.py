@@ -162,10 +162,19 @@ def main() -> int:
         created = _check(
             client.post(
                 f"{base}/api/lti/accounts/{account}/developer_keys/tool_configuration",
+                # Canvas namespaces this payload: ``settings_url`` lives under
+                # ``tool_configuration``, not at the top level. Sending it flat
+                # returns 400 "tool_configuration is missing", which reads like
+                # a permission problem but isn't.
                 json={
-                    "settings_url": config_url,
+                    "tool_configuration": {
+                        "settings_url": config_url,
+                    },
                     "developer_key": {
                         "name": args.tool_name,
+                        # Canvas stores redirect URIs as a newline-delimited
+                        # text field. All of them must be listed or the
+                        # post-login redirect fails with "Invalid redirect_uri".
                         "redirect_uris": "\n".join(
                             cfg_json.get("redirect_uris") or [cfg_json["target_link_uri"]]
                         ),
