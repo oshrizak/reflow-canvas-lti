@@ -140,6 +140,54 @@ def _synthetic_fixtures(course: str) -> list[tuple[str, str]]:
     ]
 
 
+# --- IP-literal link variants ------------------------------------------
+# The 2026-08-04 bisect landed on `<a href="http://211.25.251.1...">` — a
+# link to a bare IP over plain HTTP, which managed WAF rule sets treat as
+# an SSRF / malicious-link signature. It is ordinary course content: the
+# SPRITE tool really is hosted at that address.
+#
+# The question these variants answer is whether the connector can render
+# the link in a form that still works for a student but no longer matches
+# the rule. The catch is AWS WAF text transformations: if the rule applies
+# HTML_ENTITY_DECODE or URL_DECODE before matching, encoding buys nothing.
+# Only a measurement settles it.
+
+_IP_URL = "http://211.25.251.1/sprite/"
+
+
+def _link_variants() -> list[tuple[str, str]]:
+    filler = _PROSE * 40  # push past the trivial-size case
+    entity_host = "211&#46;25&#46;251&#46;1"
+    return [
+        ("raw IP link (control)", f'<p><a href="{_IP_URL}">SPRITE</a></p>{filler}'),
+        ("IP as plain text", f"<p>SPRITE server: {_IP_URL}</p>{filler}"),
+        (
+            "entity-encoded dots",
+            f'<p><a href="http://{entity_host}/sprite/">SPRITE</a></p>{filler}',
+        ),
+        (
+            "https instead of http",
+            f'<p><a href="https://211.25.251.1/sprite/">SPRITE</a></p>{filler}',
+        ),
+        ("no link at all (control)", f"<p>SPRITE</p>{filler}"),
+    ]
+
+
+async def _run_link_variants(canvas: CanvasClient, course: str, slug: str) -> None:
+    print("\nIP-literal link variants\n")
+    print(f"{'variant':<28} {'bytes':>8}  result")
+    print("-" * 60)
+    for label, body in _link_variants():
+        result = await _attempt(canvas, course, slug, body)
+        print(f"{label:<28} {len(body.encode()):>8}  {result}")
+        await asyncio.sleep(0.4)
+    print(
+        "\nIf 'raw IP link' is blocked and 'entity-encoded dots' passes, the "
+        "renderer can fix this and inline pages keep working. If both are "
+        "blocked, the rule decodes entities and this needs a WAF exception.\n"
+    )
+
+
 async def _run_synthetic(canvas: CanvasClient, course: str, slug: str) -> None:
     print("\nSynthetic probes — same target page, different body shapes\n")
     print(f"{'payload':<28} {'bytes':>8}  result")
@@ -211,11 +259,15 @@ async def main() -> int:
     ap.add_argument("--course", required=True, help="Canvas course id")
     ap.add_argument("--job", default="", help="Reflow job id to bisect")
     ap.add_argument("--synthetic", action="store_true", help="run shape probes")
+    ap.add_argument(
+        "--links", action="store_true",
+        help="test IP-literal link encodings (the 2026-08-04 trigger)",
+    )
     ap.add_argument("--page-slug", default="reflow-waf-probe-safe-to-delete")
     args = ap.parse_args()
 
-    if not args.job and not args.synthetic:
-        ap.error("choose --synthetic, --job JOB_ID, or both")
+    if not args.job and not args.synthetic and not args.links:
+        ap.error("choose --synthetic, --links, --job JOB_ID, or a combination")
 
     redis: Redis = Redis.from_url(settings.redis_url)
     # get_platform_for_course returns an id; the client wants the record.
@@ -242,6 +294,8 @@ async def main() -> int:
 
     if args.synthetic:
         await _run_synthetic(canvas, args.course, args.page_slug)
+    if args.links:
+        await _run_link_variants(canvas, args.course, args.page_slug)
     if args.job:
         await _run_bisect(canvas, redis, args.course, args.page_slug, args.job)
 
