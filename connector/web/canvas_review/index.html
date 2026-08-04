@@ -16,7 +16,22 @@
   .badge { display: inline-block; padding: 0.15rem 0.55rem; border-radius: 999px; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.02em; }
   .badge-accessibility { background: #e6f0fb; color: #0b3b6e; }   /* WCAG AA: 7.4:1 */
   .badge-pii { background: #fff1d6; color: #6b3a00; }              /* WCAG AA: 7.0:1 */
+  /* Status pills. Every one pairs colour with a distinct word, so the
+     state survives greyscale printing and colour-blind readers — SC 1.4.1
+     is not satisfied by hue alone. Contrast ratios checked on white. */
+  .badge-done       { background: #e3f2e6; color: #1d5c2f; }       /* 6.3:1 */
+  .badge-converting { background: #eceff1; color: #40484d; }       /* 8.1:1 */
+  .badge-attention  { background: #fdeaea; color: #8a2a2a; }       /* 7.1:1 */
+  .reason { display: block; margin-top: 0.2rem; font-size: 0.82rem; color: #565d64; }
+  .filters { margin-top: 1.25rem; display: flex; flex-wrap: wrap; gap: 0.5rem; }
+  .filters button { font: inherit; font-size: 0.9rem; padding: 0.35rem 0.8rem;
+                    border: 1px solid #c9d1d9; border-radius: 999px;
+                    background: #fff; color: #33393f; cursor: pointer; }
+  .filters button[aria-pressed="true"] { background: #1b4b66; color: #fff; border-color: #1b4b66; }
+  .filters button:focus-visible { outline: 3px solid #c8a96e; outline-offset: 2px; }
   .empty { padding: 2rem 0; color: #666; font-style: italic; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+             overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
   /* Course scanning switch. Contrast checked against #f6f8fa: the
      body text at #33393f is 9.4:1, the muted note at #565d64 is 5.6:1. */
   .optin { margin-top: 1.25rem; padding: 1rem 1.15rem; border: 1px solid #c9d1d9;
@@ -35,8 +50,8 @@
 </style>
 </head>
 <body>
-  <h1>Accessible Documents — Review queue</h1>
-  <p class="lede">Hello, {{ user_name }}. Each row is a PDF that needs your decision before students see it. The badge tells you what kind of review is being requested.</p>
+  <h1>Accessible Documents</h1>
+  <p class="lede">Hello, {{ user_name }}. Every PDF Reflow knows about in this course, and where it stands. Rows that need a decision from you are listed first.</p>
 
   <section class="optin" id="optin" hidden aria-labelledby="optin-h">
     <h2 id="optin-h">Automatic conversion for this course</h2>
@@ -45,15 +60,24 @@
     <p><button type="button" id="optin-btn" aria-pressed="false" disabled>Loading…</button></p>
   </section>
 
+  <div class="filters" id="filters" role="group" aria-label="Filter documents by state" hidden>
+    <button type="button" data-filter="all" aria-pressed="true">All</button>
+    <button type="button" data-filter="needs_you" aria-pressed="false">Needs you</button>
+    <button type="button" data-filter="converting" aria-pressed="false">Converting</button>
+    <button type="button" data-filter="done" aria-pressed="false">Published</button>
+    <button type="button" data-filter="attention" aria-pressed="false">Needs attention</button>
+  </div>
+
   <div id="status" aria-live="polite"></div>
   <table id="queue" hidden>
+    <caption class="sr-only">Documents in this course and their conversion state</caption>
     <thead>
-      <tr><th>Filename</th><th>Needs</th><th>Submitted</th><th>Action</th></tr>
+      <tr><th scope="col">Filename</th><th scope="col">State</th><th scope="col">Added</th><th scope="col">Action</th></tr>
     </thead>
     <tbody></tbody>
   </table>
 
-  <p id="empty" class="empty" hidden>Nothing waiting for review. New PDFs you upload will appear here within a few minutes.</p>
+  <p id="empty" class="empty" hidden>Reflow hasn't processed any documents in this course yet. Turn on automatic conversion above, or copy a PDF into the drop folder.</p>
 
 <script>
   const courseId = "{{ course_id }}";
@@ -132,56 +156,108 @@
 
   loadOptin();
 
-  // The PII gate (``awaiting_approval``) wants a privacy decision before
-  // Reflow even starts producing the accessible version. The accessibility
-  // gate (``awaiting_review``) is the final approval before publishing the
-  // generated page. Different surfaces, different language.
-  function badgeFor(status) {
-    if (status === "awaiting_approval") {
-      return '<span class="badge badge-pii">PII review</span>';
+  // Each state gets a word as well as a colour. The PII gate blocks Reflow
+  // before it produces anything; the accessibility gate is the last step
+  // before students see the page. Both need you, so both say so.
+  const LABELS = {
+    awaiting_approval: ["Privacy review", "badge-pii"],
+    awaiting_review:   ["Accessibility review", "badge-accessibility"],
+    published:         ["Published", "badge-done"],
+    processing:        ["Converting", "badge-converting"],
+    processing_queued: ["Queued", "badge-converting"],
+    queued:            ["Queued", "badge-converting"],
+    pii_scanning:      ["Checking for personal data", "badge-converting"],
+    page_failed:       ["Page blocked", "badge-attention"],
+    failed:            ["Did not convert", "badge-attention"],
+    rejected:          ["Declined", "badge-attention"],
+    denied:            ["Privacy denied", "badge-attention"],
+  };
+
+  function badgeFor(row) {
+    const [label, cls] = LABELS[row.status] || ["Working", "badge-converting"];
+    let html = `<span class="badge ${cls}">${escapeHtml(label)}</span>`;
+    if (row.reason) html += `<span class="reason">${escapeHtml(row.reason)}</span>`;
+    return html;
+  }
+
+  // A published document links to its Canvas page; one that needs you links
+  // to the decision screen; everything else gets plain text, so nothing
+  // looks actionable when it isn't.
+  function actionCell(row) {
+    if (row.action_url) {
+      return `<a class="button" href="${escapeHtml(row.action_url)}">Review</a>`;
     }
-    return '<span class="badge badge-accessibility">Accessibility review</span>';
+    if (row.status === "published" && row.canvas_page_url) {
+      return `<a class="button" href="${escapeHtml(row.canvas_page_url)}">View page</a>`;
+    }
+    return "—";
   }
-  function actionUrlFor(job) {
-    const id = encodeURIComponent(job.reflow_job_id);
-    return job.status === "awaiting_approval"
-      ? `/canvas/review/${id}/pii`
-      : `/canvas/review/${id}`;
+
+  let allRows = [];
+  let activeFilter = "all";
+
+  function paintRows() {
+    const rows = activeFilter === "all"
+      ? allRows
+      : allRows.filter(r => r.bucket === activeFilter);
+    tbody.innerHTML = "";
+    if (!rows.length) {
+      table.hidden = true;
+      empty.hidden = false;
+      empty.textContent = activeFilter === "all"
+        ? "Reflow hasn't processed any documents in this course yet. Turn on automatic conversion above, or copy a PDF into the drop folder."
+        : "No documents in this state.";
+      return;
+    }
+    table.hidden = false;
+    empty.hidden = true;
+    for (const row of rows) {
+      const tr = document.createElement("tr");
+      const added = row.created_at
+        ? new Date(row.created_at * 1000).toLocaleString()
+        : "—";
+      tr.innerHTML = `
+        <td>${escapeHtml(row.filename)}</td>
+        <td>${badgeFor(row)}</td>
+        <td>${added}</td>
+        <td>${actionCell(row)}</td>
+      `;
+      tbody.appendChild(tr);
+    }
   }
+
+  document.getElementById("filters").addEventListener("click", (ev) => {
+    const btn = ev.target.closest("button[data-filter]");
+    if (!btn) return;
+    activeFilter = btn.dataset.filter;
+    for (const b of document.querySelectorAll("#filters button[data-filter]")) {
+      b.setAttribute("aria-pressed", b === btn ? "true" : "false");
+    }
+    paintRows();
+  });
 
   async function load() {
     statusEl.textContent = "Loading…";
     try {
-      const resp = await fetch(`/canvas/review/api/pending?course_id=${encodeURIComponent(courseId)}`);
+      const resp = await fetch(`/canvas/review/api/files?course_id=${encodeURIComponent(courseId)}`,
+                               { credentials: "same-origin" });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
-      statusEl.textContent = "";
-      tbody.innerHTML = "";
-      if (!data.jobs.length) {
-        table.hidden = true; empty.hidden = false; return;
-      }
-      table.hidden = false; empty.hidden = true;
-      // Sort PII gates to the top — they block Reflow's processing entirely,
-      // so they're the more urgent decision.
-      data.jobs.sort((a, b) => {
-        if (a.status === b.status) return a.created_at - b.created_at;
-        return a.status === "awaiting_approval" ? -1 : 1;
-      });
-      for (const job of data.jobs) {
-        const tr = document.createElement("tr");
-        const submitted = new Date(job.created_at * 1000).toLocaleString();
-        tr.innerHTML = `
-          <td>${escapeHtml(job.filename)}</td>
-          <td>${badgeFor(job.status)}</td>
-          <td>${submitted}</td>
-          <td><a class="button" href="${actionUrlFor(job)}">Review</a></td>
-        `;
-        tbody.appendChild(tr);
-      }
+      allRows = data.files || [];
+      const needs = (data.counts && data.counts.needs_you) || 0;
+      statusEl.textContent = needs
+        ? `${needs} document${needs === 1 ? "" : "s"} waiting on your decision.`
+        : (allRows.length ? "Nothing is waiting on you." : "");
+      document.getElementById("filters").hidden = allRows.length === 0;
+      paintRows();
     } catch (err) {
-      statusEl.textContent = `Could not load queue: ${err.message}`;
+      statusEl.textContent = `Could not load documents: ${err.message}`;
     }
   }
+
+  // Documents move through states on their own, so a screen left open goes
+  // stale within a minute. Refresh quietly rather than making people reload.
+  setInterval(load, 30000);
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;"}[c]));

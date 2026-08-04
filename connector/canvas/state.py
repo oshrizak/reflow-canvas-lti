@@ -297,6 +297,46 @@ async def list_pending(redis: Redis, course_id: str) -> list[CanvasJob]:
     return jobs
 
 
+async def list_course_jobs(redis: Redis, course_id: str) -> list[CanvasJob]:
+    """Every bridge record belonging to one course, oldest first.
+
+    ``list_pending`` only sees the pending set, so a job that has moved on
+    — published, failed, still converting — is invisible to it. The review
+    queue used that as its only source and therefore could not answer the
+    question faculty actually ask, which is "where is everything?". This
+    walks the job keyspace instead and lets the caller decide what to show.
+
+    Scanning is fine at course scale: one course holds tens of records, not
+    thousands, and the review page is opened by hand rather than polled.
+    """
+    out: list[CanvasJob] = []
+    cursor = 0
+    pattern = JOB_KEY.format(job_id="*")
+    while True:
+        cursor, keys = await redis.scan(cursor=cursor, match=pattern, count=200)
+        for raw_key in keys:
+            key = raw_key.decode() if isinstance(raw_key, bytes) else str(raw_key)
+            raw: Any = await redis.get(key)
+            if not raw:
+                continue
+            try:
+                data = json.loads(raw)
+            except (TypeError, ValueError):
+                continue
+            if str(data.get("canvas_course_id") or "") != str(course_id):
+                continue
+            try:
+                out.append(CanvasJob(**data))
+            except TypeError:
+                # Record written by an older schema. Skip rather than break
+                # the whole listing for one stale key.
+                continue
+        if cursor == 0:
+            break
+    out.sort(key=lambda j: j.created_at)
+    return out
+
+
 EDITED_HTML_KEY = tk("canvas:edited:{job_id}")
 
 

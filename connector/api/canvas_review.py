@@ -24,6 +24,7 @@ from ..canvas.state import (
     get_course_optin,
     get_job,
     is_course_enabled,
+    list_course_jobs,
     list_pending,
     put_job,
     set_course_enabled,
@@ -111,6 +112,134 @@ async def api_pending(
         for j in jobs
     ]
     return JSONResponse({"course_id": target_course, "jobs": rows})
+
+
+# Display buckets. Reflow's internal status vocabulary is finer-grained
+# than anything a coordinator needs on a list screen: what they want to
+# know is whether a document needs them, is still working, is finished, or
+# has gone wrong. Keep the raw status in the payload for the detail views.
+_BUCKET: dict[str, str] = {
+    "awaiting_approval": "needs_you",
+    "awaiting_review": "needs_you",
+    "processing": "converting",
+    "processing_queued": "converting",
+    "queued": "converting",
+    "pii_scanning": "converting",
+    "published": "done",
+    "page_failed": "attention",
+    "failed": "attention",
+    "rejected": "attention",
+    "denied": "attention",
+}
+
+# Lower wins when one Canvas file has several job records — which happens
+# whenever a document is resubmitted. Faculty intent and finished work beat
+# stale failures, so a dead job never masks a live one.
+_RANK: dict[str, int] = {
+    "published": 0,
+    "awaiting_review": 1,
+    "awaiting_approval": 1,
+    "processing": 2,
+    "pii_scanning": 2,
+    "processing_queued": 2,
+    "queued": 2,
+    "page_failed": 5,
+    "rejected": 8,
+    "failed": 9,
+    "denied": 9,
+}
+
+# What the reader should meet first: their own outstanding decisions, then
+# anything that went wrong, then work in flight, then finished documents.
+_DISPLAY_ORDER: dict[str, int] = {
+    "needs_you": 0,
+    "attention": 1,
+    "converting": 2,
+    "done": 3,
+}
+
+# Plain-language reasons. The raw ``error`` string is written for
+# operators and mentions job ids and worker names; none of that helps the
+# person deciding what to do about a document.
+_REASON: dict[str, str] = {
+    "page_failed": (
+        "Converted successfully, but Reflow could not write the Canvas page. "
+        "The page may be locked or in a locked module."
+    ),
+    "rejected": "You declined this document. It was not published.",
+    "denied": "The privacy review was denied, so no accessible version was made.",
+}
+
+
+@router.get("/api/files")
+async def api_files(
+    course_id: str | None = None,
+    redis: Redis = Depends(get_redis_client),
+    reflow_lti_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> JSONResponse:
+    """Every document Reflow knows about in this course, with its state.
+
+    ``/api/pending`` answers "what needs a decision"; this answers "where
+    is everything", which is the question the review screen is actually
+    opened to settle. One row per Canvas file, best job wins.
+    """
+
+    session = await _require_session(redis, reflow_lti_session)
+    target_course = course_id or session.course_id
+
+    best: dict[str, Any] = {}
+    for job in await list_course_jobs(redis, target_course):
+        fid = str(job.canvas_file_id or "")
+        if not fid:
+            continue
+        current = best.get(fid)
+        rank = (_RANK.get(str(job.status), 7), -float(job.created_at or 0))
+        if current is None or rank < current[0]:
+            best[fid] = (rank, job)
+
+    rows = []
+    for fid, (_, job) in best.items():
+        raw_status = str(job.status)
+        bucket = _BUCKET.get(raw_status, "converting")
+        reason = _REASON.get(raw_status)
+        if bucket == "attention" and reason is None:
+            reason = (
+                job.error
+                or "Conversion did not finish. Re-upload the file to try again."
+            )
+        rows.append(
+            {
+                "canvas_file_id": fid,
+                "reflow_job_id": job.reflow_job_id,
+                "filename": job.canvas_file_name,
+                "status": raw_status,
+                "bucket": bucket,
+                "reason": reason,
+                "created_at": job.created_at,
+                "canvas_page_url": job.canvas_page_url,
+                # Only rows in ``needs_you`` carry an action URL; the
+                # front end uses its absence to render plain text instead
+                # of a button, so nothing looks clickable that isn't.
+                "action_url": (
+                    f"/canvas/review/{job.reflow_job_id}/pii"
+                    if raw_status == "awaiting_approval"
+                    else f"/canvas/review/{job.reflow_job_id}"
+                    if raw_status == "awaiting_review"
+                    else None
+                ),
+            }
+        )
+
+    # Display order is not the dedupe ranking. ``_RANK`` decides which job
+    # best represents a file; this decides what the reader sees first, and
+    # that is whatever is waiting on them, then whatever is broken.
+    rows.sort(key=lambda r: (_DISPLAY_ORDER.get(r["bucket"], 9), r["filename"].lower()))
+    counts: dict[str, int] = {}
+    for r in rows:
+        counts[r["bucket"]] = counts.get(r["bucket"], 0) + 1
+    return JSONResponse(
+        {"course_id": target_course, "files": rows, "counts": counts}
+    )
 
 
 @router.get("/{job_id}", response_class=HTMLResponse)

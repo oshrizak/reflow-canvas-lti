@@ -399,6 +399,27 @@ async def tool_config(request: Request) -> JSONResponse:
                                 "target_link_uri": f"{base}/canvas/review",
                                 "default": "enabled",
                                 "visibility": "members",
+                                # Launch in a new tab rather than Canvas's
+                                # iframe.
+                                #
+                                # The OIDC round trip sets a state cookie on
+                                # this tool's own domain. Inside a Canvas
+                                # iframe that domain is third-party, and
+                                # current browsers drop third-party cookies by
+                                # default — so the launch starts, redirects to
+                                # the platform, and never completes. Chrome
+                                # surfaces this as a bare "refused to connect",
+                                # which points at the tool and hides the real
+                                # cause.
+                                #
+                                # A top-level window makes the cookie
+                                # first-party and the flow just works. This is
+                                # a normal, spec-supported LTI pattern, not a
+                                # hack — the alternative is implementing the
+                                # LTI Platform Storage spec to keep state
+                                # without cookies, which is worth doing later
+                                # but is not a prerequisite for launching.
+                                "windowTarget": "_blank",
                             }
                         ],
                     },
