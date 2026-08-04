@@ -376,6 +376,19 @@ async def tool_config(request: Request) -> JSONResponse:
                     "domain": request.url.hostname or "",
                     "tool_id": "equalify-reflow",
                     "platform": "canvas.instructure.com",
+                    # REQUIRED by Canvas, and load-bearing here. Canvas
+                    # defaults to "anonymous" when this is absent, which
+                    # silently drops name and email from the launch AND
+                    # stops the $Canvas.user.id substitution below from
+                    # expanding. Downstream that leaves SessionPayload with
+                    # no user_email/user_name, so the review page can't greet
+                    # anyone and the PII decision handler rejects the request
+                    # for want of a usable reviewer identity.
+                    #
+                    # "public" is the minimum level that carries both the
+                    # user's name and email; the connector needs an
+                    # identifiable reviewer for the approval audit trail.
+                    "privacy_level": "public",
                     "settings": {
                         "text": "Accessible Documents",
                         "placements": [
