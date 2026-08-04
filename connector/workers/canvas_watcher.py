@@ -10,9 +10,12 @@ Surfaces covered (all on a 60s default poll):
      (catches RCE-paperclip uploads that land in hidden internal folders)
   3. Modules     /courses/:id/modules/:id/items where type == "File"
   4. Pages       /courses/:id/pages -> body HTML scanned for file refs
-  5. Discussions /courses/:id/discussion_topics + their entries (incl.
-     announcements). Both the topic message HTML and each entry's
-     message HTML are scanned; entry.attachments[] is also harvested.
+  5. Discussions /courses/:id/discussion_topics (incl. announcements) —
+     TOPIC level only. The topic message HTML and the instructor's own
+     topic attachments. Discussion *entries* are deliberately NOT
+     scanned: their attachments are student work, and converting those
+     without the student's knowledge is out of scope for proactive
+     remediation. Students needing an accessible copy go through DSS.
   6. Assignments /courses/:id/assignments — description HTML
   7. Quizzes     /courses/:id/quizzes — description HTML
   8. Syllabus    /courses/:id?include[]=syllabus_body
@@ -25,6 +28,7 @@ Reflow. The processed set in Redis guards against double-submission.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 import time
@@ -40,8 +44,12 @@ from ..canvas.spend_cap import reserve_submission
 from ..canvas.state import (
     CanvasJob,
     already_processed,
+    get_job_for_hash,
+    is_course_enabled,
     mark_processed,
+    put_file_alias,
     put_job,
+    put_job_for_hash,
 )
 from ..canvas.tenant import tk
 from ..canvas.user_oauth import get_user_token
@@ -80,6 +88,11 @@ _WATCHER_SCOPES = [
 ]
 
 logger = logging.getLogger(__name__)
+
+# How long before we re-attempt creating a course's drop folder. Long
+# enough that a course whose token lacks manage_files isn't retried every
+# tick; short enough that a folder someone deleted comes back same-day.
+_DROP_FOLDER_RETRY_SECONDS = 6 * 60 * 60
 
 
 async def _run_verapdf_audit(
@@ -486,26 +499,34 @@ async def _discover_file_ids(canvas: CanvasClient, course_id: str) -> tuple[dict
     except CanvasApiError as exc:
         logger.warning("pages scan failed: %s", exc)
 
-    # 5. Discussions + announcements
+    # 5. Discussions + announcements — TOPIC level only.
+    #
+    # We deliberately do NOT descend into discussion *entries*. Entries are
+    # overwhelmingly student replies, and their attachments are student work.
+    # Sweeping those into an AI conversion pipeline is not proactive course
+    # remediation — it is processing student submissions without the student
+    # knowing, which:
+    #   * exceeds what the one-time faculty consent disclaimer covers (that
+    #     disclaimer is acknowledged by the instructor, not by students),
+    #   * cuts against the upstream rule "do not add features that process
+    #     student records or PII beyond the existing Presidio scan", and
+    #   * is the first thing an ISO or a union rep will ask about.
+    #
+    # A student who needs an accessible copy of their own or a peer's file
+    # goes through the accommodation route (DSS), which is a human decision
+    # with a documented basis — not a background job.
+    #
+    # Topic-level content is instructor-authored (the prompt and any files the
+    # instructor attached to it), so that stays in scope.
     try:
         topics = await canvas.list_discussion_topics(course_id, include_announcements=True)
         for t in topics:
             refs |= _extract_file_ids_from_html(t.get("message"))
-            # Attachments directly on the topic
+            # Attachments the instructor attached to the topic itself.
             for att in t.get("attachments") or []:
                 aid = str(att.get("id") or "")
                 if aid:
                     refs.add(aid)
-            try:
-                entries = await canvas.list_discussion_entries(course_id, str(t.get("id")))
-            except CanvasApiError:
-                continue
-            for e in entries:
-                refs |= _extract_file_ids_from_html(e.get("message"))
-                for att in e.get("attachments") or []:
-                    aid = str(att.get("id") or "")
-                    if aid:
-                        refs.add(aid)
     except CanvasApiError as exc:
         logger.warning("discussions scan failed: %s", exc)
 
@@ -535,6 +556,118 @@ async def _discover_file_ids(canvas: CanvasClient, course_id: str) -> tuple[dict
     return full, refs
 
 
+async def _discover_drop_folder_files(
+    canvas: CanvasClient,
+    course_id: str,
+    folder_name: str,
+    redis: Redis | None = None,
+) -> dict[str, dict[str, Any]]:
+    """Return convertible files sitting in the course's Reflow drop folder.
+
+    The drop folder is the explicit, per-document opt-in: a faculty member
+    copies a PDF into it to say "convert this one". It is scanned on every
+    tick regardless of whether full-course scanning is enabled, so someone
+    can try Reflow on a single file without authorising a sweep of
+    everything they have ever uploaded.
+
+    Matching is case-insensitive on the folder's leaf name so that
+    "Reflow - Convert to Accessible" and "reflow - convert to accessible"
+    both work — faculty retype these.
+
+    Returns an empty dict when the folder doesn't exist. We do not create it
+    here; the watcher should not be mutating course structure on a poll.
+    """
+    wanted = folder_name.strip().lower()
+    if not wanted:
+        return {}
+    out: dict[str, dict[str, Any]] = {}
+    try:
+        folders = await canvas.list_course_folders(course_id)
+    except CanvasApiError as exc:
+        logger.warning("drop-folder lookup failed for course %s: %s", course_id, exc)
+        return {}
+
+    found = False
+    for folder in folders:
+        leaf = str(folder.get("name") or "").strip().lower()
+        if leaf != wanted:
+            continue
+        found = True
+        try:
+            for f in await canvas.list_folder_files(str(folder.get("id"))):
+                fid = str(f.get("id") or "")
+                if fid and _is_convertible(f):
+                    out[fid] = f
+        except CanvasApiError as exc:
+            logger.warning(
+                "drop-folder listing failed for course %s folder %s: %s",
+                course_id, folder.get("id"), exc,
+            )
+
+    if not found and redis is not None:
+        # Materialise it once. A drop folder nobody knows to create is a
+        # feature nobody uses, and faculty shouldn't have to be told the
+        # exact folder name. Guarded by a TTL key so a course whose token
+        # lacks manage_files doesn't get a create attempt every tick; if
+        # someone deletes the folder it reappears after the TTL lapses.
+        guard = tk("canvas:course:{course_id}:dropfolder-init").format(
+            course_id=course_id
+        )
+        if await redis.set(guard, "1", ex=_DROP_FOLDER_RETRY_SECONDS, nx=True):
+            created = await canvas.create_course_folder(course_id, folder_name)
+            if created:
+                logger.info(
+                    "created Reflow drop folder %r in course %s",
+                    folder_name, course_id,
+                )
+    return out
+
+
+async def _find_sibling_file_ids(
+    canvas: CanvasClient,
+    course_id: str,
+    content: bytes,
+    *,
+    exclude_file_id: str,
+) -> list[str]:
+    """Find other Canvas files in this course with byte-identical content.
+
+    Faculty copy a PDF into the drop folder rather than moving it, so the
+    converted file has a fresh Canvas id while the copy students actually
+    click — the one linked from a Module or Page — keeps its old id. Without
+    this, the accessible page attaches to the folder copy and nobody ever
+    reaches it.
+
+    Cost control: Canvas returns ``size`` in file listings, so we only
+    download and hash files whose size matches exactly. Byte-identical PDFs
+    always have identical sizes, so this is a lossless filter and in practice
+    leaves one or two candidates.
+    """
+    target = hashlib.sha256(content).hexdigest()
+    size = len(content)
+    siblings: list[str] = []
+    try:
+        candidates = await canvas.list_course_pdfs(course_id)
+    except CanvasApiError as exc:
+        logger.warning("sibling lookup failed for course %s: %s", course_id, exc)
+        return []
+
+    for f in candidates:
+        fid = str(f.get("id") or "")
+        if not fid or fid == exclude_file_id:
+            continue
+        if int(f.get("size") or -1) != size:
+            continue
+        try:
+            other = await canvas.download_file(fid)
+        except Exception:  # noqa: BLE001 — a single unreadable file shouldn't stop the rest
+            logger.debug("sibling hash: could not read file %s", fid)
+            continue
+        if hashlib.sha256(other).hexdigest() == target:
+            siblings.append(fid)
+    return siblings
+
+
 async def _resolve_refs(canvas: CanvasClient, refs: set[str]) -> dict[str, dict[str, Any]]:
     """Resolve a set of file ids to PDF metadata. Non-PDFs are dropped."""
     out: dict[str, dict[str, Any]] = {}
@@ -556,11 +689,36 @@ async def _scan_course(
     *,
     platform_id: str | None = None,
 ) -> None:
-    full, refs = await _discover_file_ids(canvas, course_id)
-    resolved = await _resolve_refs(canvas, refs)
-    all_pdfs = {**full, **resolved}
+    # The drop folder is always live — that's the per-document opt-in, and
+    # it's how someone tries Reflow on one file before committing a course.
+    drop_folder = str(getattr(settings, "canvas_drop_folder_name", "") or "")
+    dropped = await _discover_drop_folder_files(
+        canvas, course_id, drop_folder, redis,
+    )
+
+    # Full-course scanning is gated. Until a human enables the course, we do
+    # NOT sweep Files/Modules/Pages/Assignments/etc. See config
+    # canvas_require_course_optin for the rationale.
+    require_optin = bool(getattr(settings, "canvas_require_course_optin", True))
+    course_enabled = (not require_optin) or await is_course_enabled(redis, course_id)
+
+    if course_enabled:
+        full, refs = await _discover_file_ids(canvas, course_id)
+        resolved = await _resolve_refs(canvas, refs)
+        all_pdfs = {**full, **resolved, **dropped}
+    else:
+        all_pdfs = dict(dropped)
+        if dropped:
+            logger.info(
+                "course %s is not opted in; converting %d drop-folder file(s) only",
+                course_id, len(dropped),
+            )
+
     if not all_pdfs:
-        logger.debug("no PDFs discovered in course %s", course_id)
+        logger.debug(
+            "nothing to convert in course %s (opted_in=%s, drop_folder=%r)",
+            course_id, course_enabled, drop_folder,
+        )
         return
 
     new_count = 0
@@ -616,6 +774,27 @@ async def _scan_course(
         )
         try:
             content = await canvas.download_file(file_id)
+        except Exception:
+            logger.exception("Failed to download file %s/%s", course_id, file_id)
+            continue
+
+        # Content-hash gate. Faculty copy a PDF into the drop folder, so the
+        # same document routinely appears under several Canvas file ids. If we
+        # already converted these exact bytes in this course, alias this file
+        # onto the existing job instead of paying to convert it again.
+        content_sha = hashlib.sha256(content).hexdigest()
+        prior_job = await get_job_for_hash(redis, course_id, content_sha)
+        if prior_job:
+            logger.info(
+                "Watcher: file %s/%s is byte-identical to an already-converted "
+                "document; aliasing to job %s instead of reconverting",
+                course_id, file_id, prior_job,
+            )
+            await put_file_alias(redis, course_id, file_id, prior_job)
+            await mark_processed(redis, course_id, file_id)
+            continue
+
+        try:
             # Run the Reflow submission and the VeraPDF accessibility audit
             # concurrently. The audit doesn't gate submission — if verapdf
             # isn't installed or times out we still need the Reflow job
@@ -660,6 +839,35 @@ async def _scan_course(
             ),
         )
         await mark_processed(redis, course_id, file_id)
+
+        # Remember the content hash so a re-drop of the same bytes is
+        # recognised instead of reconverted.
+        await put_job_for_hash(redis, course_id, content_sha, reflow_job_id)
+
+        # Point every byte-identical copy in this course at this job, so the
+        # accessible version surfaces on the file students actually open
+        # rather than only on the drop-folder copy. Best-effort: a failure
+        # here costs discoverability, not correctness, so it must not sink
+        # the conversion we just paid for.
+        try:
+            siblings = await _find_sibling_file_ids(
+                canvas, course_id, content, exclude_file_id=file_id,
+            )
+            for sib in siblings:
+                await put_file_alias(redis, course_id, sib, reflow_job_id)
+                await mark_processed(redis, course_id, sib)
+            if siblings:
+                logger.info(
+                    "Watcher: aliased %d identical cop%s of %s to job %s "
+                    "(course %s)",
+                    len(siblings), "y" if len(siblings) == 1 else "ies",
+                    filename, reflow_job_id, course_id,
+                )
+        except Exception:  # noqa: BLE001 — discoverability only
+            logger.exception(
+                "Watcher: sibling aliasing failed for %s/%s", course_id, file_id,
+            )
+
         new_count += 1
 
     if new_count:

@@ -351,6 +351,39 @@ class CanvasClient:
         url = f"{self.base_url}/api/v1/folders/{folder_id}/files"
         return await self._get_paged(url, {"per_page": "100"})
 
+    async def create_course_folder(
+        self, course_id: str, name: str, *, parent_folder_path: str = "",
+    ) -> dict[str, Any] | None:
+        """Create a folder in the course's Files area.
+
+        Used to materialise the Reflow drop folder, which is useless if
+        faculty have to know to create it themselves.
+
+        ``parent_folder_path`` defaults to the course files root. Returns the
+        Canvas folder object, or ``None`` when creation failed for a reason
+        that isn't worth escalating — most commonly the token lacking
+        ``manage_files``, which is a permission decision the institution has
+        made and not something the watcher should crash over.
+        """
+        url = f"{self.base_url}/api/v1/courses/{course_id}/folders"
+        payload: dict[str, Any] = {
+            "name": name,
+            "parent_folder_path": parent_folder_path,
+        }
+
+        async def _do(headers: dict[str, str]) -> httpx.Response:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                return await client.post(url, headers=headers, json=payload)
+
+        resp = await self._request_with_401_retry(_do, "create course folder")
+        if resp.is_error:
+            logger.warning(
+                "create_course_folder(%s, %r) returned %s: %s",
+                course_id, name, resp.status_code, resp.text[:200],
+            )
+            return None
+        return resp.json()
+
     async def download_file(self, file_id: str) -> bytes:
         """Fetch the raw bytes of a Canvas file.
 

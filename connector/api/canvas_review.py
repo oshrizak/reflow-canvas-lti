@@ -20,7 +20,15 @@ from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from redis.asyncio import Redis
 
-from ..canvas.state import get_job, list_pending, put_job
+from ..canvas.state import (
+    get_course_optin,
+    get_job,
+    is_course_enabled,
+    list_pending,
+    put_job,
+    set_course_enabled,
+)
+from ..config import settings
 from ..dependencies import get_redis_client
 from ..lti.routes import SESSION_COOKIE
 from ..lti.session import SessionPayload, get_session
@@ -370,6 +378,82 @@ async def reject(
     job.status = "rejected"
     await put_job(redis, job)
     return JSONResponse({"ok": True})
+
+
+_INSTRUCTOR_ROLE_HINTS = ("instructor", "teacher", "contentdeveloper", "administrator", "ta")
+
+
+def _is_instructor(session: SessionPayload) -> bool:
+    """True when the LTI roles claim indicates course-management rights.
+
+    Roles arrive as full IMS URIs, e.g.
+    ``http://purl.imsglobal.org/vocab/lis/v2/membership#Instructor``. We
+    substring-match the leaf rather than parsing, because Canvas emits
+    several vocab namespaces and the leaf is stable across all of them.
+    """
+    joined = " ".join(session.roles or []).lower()
+    return any(hint in joined for hint in _INSTRUCTOR_ROLE_HINTS)
+
+
+@router.get("/api/optin")
+async def api_optin_status(
+    course_id: str | None = None,
+    redis: Redis = Depends(get_redis_client),
+    reflow_lti_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> JSONResponse:
+    """Whether full-course scanning is on, and who turned it on."""
+    session = await _require_session(redis, reflow_lti_session)
+    target_course = course_id or session.course_id
+    enabled = await is_course_enabled(redis, target_course)
+    record = await get_course_optin(redis, target_course)
+    return JSONResponse(
+        {
+            "course_id": target_course,
+            "enabled": enabled,
+            "required": bool(getattr(settings, "canvas_require_course_optin", True)),
+            "drop_folder": str(getattr(settings, "canvas_drop_folder_name", "") or ""),
+            "enabled_by": (record or {}).get("actor") or "",
+            "enabled_at": (record or {}).get("at") or 0,
+            "can_change": _is_instructor(session),
+        }
+    )
+
+
+@router.post("/api/optin")
+async def api_optin_set(
+    payload: dict[str, Any],
+    course_id: str | None = None,
+    redis: Redis = Depends(get_redis_client),
+    reflow_lti_session: str | None = Cookie(default=None, alias=SESSION_COOKIE),
+) -> JSONResponse:
+    """Turn full-course scanning on or off for this course.
+
+    Restricted to instructors: a student launching the tool must not be able
+    to authorise processing of a whole course. The actor is recorded so
+    "who authorised this" has an answer that isn't "the software".
+    """
+    session = await _require_session(redis, reflow_lti_session)
+    if not _is_instructor(session):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only course instructors can change this setting.",
+        )
+    target_course = course_id or session.course_id
+    if not target_course:
+        raise HTTPException(status_code=400, detail="No course in session")
+
+    await enforce_rate_limit(
+        redis, bucket="course_optin", actor=session.user_id, limit=20, window_seconds=60,
+    )
+
+    enabled = bool(payload.get("enabled"))
+    actor = session.user_email or session.user_id or ""
+    await set_course_enabled(redis, target_course, enabled=enabled, actor=actor)
+    logger.info(
+        "course %s scanning %s by %s",
+        target_course, "ENABLED" if enabled else "DISABLED", actor,
+    )
+    return JSONResponse({"ok": True, "course_id": target_course, "enabled": enabled})
 
 
 def _load_template(name: str) -> str:

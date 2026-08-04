@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
@@ -118,6 +119,112 @@ async def clear_processed(redis: Redis, course_id: str, canvas_file_id: str) -> 
     on its next tick. Used by the overlay's manual 'Create accessible page'
     action. Idempotent — a no-op if the marker isn't set."""
     await redis.srem(PROCESSED_KEY.format(course_id=course_id), canvas_file_id)
+
+
+# ----------------------------------------------------------------------
+# Per-course opt-in
+#
+# Reflow is OFF for a course until a human turns it on. Until then the
+# watcher only looks at the drop folder, so a faculty member can try one
+# file without authorising a sweep of everything they've ever uploaded.
+# ----------------------------------------------------------------------
+
+OPTIN_KEY = tk("canvas:course:{course_id}:optin")
+
+
+async def is_course_enabled(redis: Redis, course_id: str) -> bool:
+    """True when a human has explicitly enabled full-course scanning."""
+    return bool(await redis.exists(OPTIN_KEY.format(course_id=course_id)))
+
+
+async def set_course_enabled(
+    redis: Redis, course_id: str, *, enabled: bool, actor: str = "",
+) -> None:
+    """Turn full-course scanning on or off.
+
+    Stores who flipped it and when — an ISO asking "who authorised
+    processing for this course" needs an answer that isn't "the software".
+    """
+    key = OPTIN_KEY.format(course_id=course_id)
+    if enabled:
+        await redis.set(key, json.dumps({"actor": actor, "at": time.time()}))
+    else:
+        await redis.delete(key)
+
+
+async def get_course_optin(redis: Redis, course_id: str) -> dict[str, Any] | None:
+    """Return ``{"actor", "at"}`` for an enabled course, else ``None``."""
+    raw = await redis.get(OPTIN_KEY.format(course_id=course_id))
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except (ValueError, TypeError):
+        return None
+
+
+# ----------------------------------------------------------------------
+# Content-hash index
+#
+# Faculty drop a *copy* of a PDF into the Reflow folder, so the converted
+# file has a different Canvas id from the one students actually click in
+# Modules or Pages. We hash content to recognise "same document, different
+# file id" and attach the accessible page to every copy.
+# ----------------------------------------------------------------------
+
+CONTENT_HASH_KEY = tk("canvas:course:{course_id}:hash:{sha256}")
+
+
+async def get_job_for_hash(
+    redis: Redis, course_id: str, sha256: str,
+) -> str | None:
+    """Return the Reflow job id already produced for this exact content."""
+    raw = await redis.get(
+        CONTENT_HASH_KEY.format(course_id=course_id, sha256=sha256)
+    )
+    if raw is None:
+        return None
+    return raw.decode() if isinstance(raw, bytes) else str(raw)
+
+
+async def put_job_for_hash(
+    redis: Redis, course_id: str, sha256: str, reflow_job_id: str,
+) -> None:
+    """Remember which job converted this content, so a re-drop of the same
+    file is recognised instead of reconverted (which would burn API spend)."""
+    await redis.set(
+        CONTENT_HASH_KEY.format(course_id=course_id, sha256=sha256),
+        reflow_job_id,
+    )
+
+
+# A file id that shares content with a converted file, pointing at that
+# file's job. The overlay consults this so the accessible-version badge
+# appears on the copy students actually click — typically the one linked
+# from a Module — and not only on the copy sitting in the drop folder.
+FILE_ALIAS_KEY = tk("canvas:course:{course_id}:file-alias:{file_id}")
+
+
+async def get_file_alias(
+    redis: Redis, course_id: str, file_id: str,
+) -> str | None:
+    """Return the Reflow job id this file id is aliased to, if any."""
+    raw = await redis.get(
+        FILE_ALIAS_KEY.format(course_id=course_id, file_id=file_id)
+    )
+    if raw is None:
+        return None
+    return raw.decode() if isinstance(raw, bytes) else str(raw)
+
+
+async def put_file_alias(
+    redis: Redis, course_id: str, file_id: str, reflow_job_id: str,
+) -> None:
+    """Point a file id at an existing job without converting it again."""
+    await redis.set(
+        FILE_ALIAS_KEY.format(course_id=course_id, file_id=file_id),
+        reflow_job_id,
+    )
 
 
 async def put_job(redis: Redis, job: CanvasJob) -> None:

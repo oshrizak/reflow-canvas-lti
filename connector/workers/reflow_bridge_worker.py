@@ -300,6 +300,42 @@ def _canvas_file_url(job: CanvasJob) -> str | None:
     return f"/courses/{course_id}/files/{file_id}"
 
 
+def choose_page_body(
+    *,
+    rendered_html: str,
+    title: str,
+    accessible_url: str,
+    original_pdf_url: str | None,
+    inline_cap: int,
+) -> tuple[str, str]:
+    """Pick what actually goes in the Canvas Page body.
+
+    Returns ``(body_html, mode)`` where mode is ``"inline"`` or ``"stub"``.
+
+    Inline is the preferred outcome: the accessible document *is* the Canvas
+    Page, so it renders in the course with no second tab, works in the Canvas
+    mobile apps, and keeps working if the connector is down.
+
+    Canvas rejects Page bodies over 511,999 characters with HTTP 400
+    ("is too long"). ``inline_cap`` sits below that with headroom; anything
+    larger falls back to a link stub pointing at the tool-served HTML, which
+    is tiny and always writes cleanly.
+
+    ``inline_cap <= 0`` forces stub mode, which is the escape hatch if an
+    institution's Canvas turns out to behave differently.
+    """
+    if inline_cap > 0 and len(rendered_html) <= inline_cap:
+        return rendered_html, "inline"
+    return (
+        render_link_stub(
+            title=title,
+            accessible_url=accessible_url,
+            original_pdf_url=original_pdf_url,
+        ),
+        "stub",
+    )
+
+
 async def _notify_professor(canvas: CanvasClient, job: CanvasJob) -> None:
     """Best-effort: drop a Canvas Conversation announcing the new draft.
 
@@ -542,24 +578,49 @@ async def _drive_job(
         original_pdf_url=_canvas_file_url(job),
     )
 
-    # Two Canvas Cloud constraints rule out putting the document IN the Page:
-    #   1. the edge WAF rejects Page REST writes whose body exceeds ~8KB, and
-    #   2. Canvas won't render an uploaded .html file inline (it only offers a
-    #      download — confirmed: the file preview shows a Canvas 404).
-    # So the Page is a small stub that links to the tool-served rendered HTML
-    # (/canvas/panorama/alt/{job}/html) — the same surface the overlay's
-    # "Accessible HTML" button uses, which renders reliably in any environment.
-    # The stub is always tiny, so the page write clears the WAF at any document
-    # size. Faculty must publish the job before students can open the link;
-    # until then it shows a "pending review" message — the intended approval
-    # gate. See the canvas-waf-page-body-limit note.
+    # Write the converted document straight INTO the Canvas Page when it fits.
+    #
+    # This used to always publish a tiny stub that linked out to tool-served
+    # HTML, on the belief that a Canvas Cloud edge WAF rejected Page writes
+    # above ~8KB. That was measured against csueb.instructure.com with
+    # scripts/probe_page_body_limit.py and turned out to be wrong: there is no
+    # WAF size rule on this path. The only ceiling is Canvas's own application
+    # limit of 511,999 characters, which returns a clean HTTP 400
+    # ("is too long (maximum is 511,999 characters)") rather than a CloudFront
+    # 403. At ~1.8KB of rendered HTML per PDF page that's roughly 280 pages, so
+    # essentially every real course document fits inline.
+    #
+    # Inline is strictly better for students: the accessible version IS the
+    # Canvas Page, so it renders in the course, needs no new tab, works in the
+    # Canvas mobile apps, and survives the tool being offline.
+    #
+    # The stub remains as a fallback for documents past the threshold. Figures
+    # are already uploaded to Canvas Files and referenced by absolute Canvas
+    # URLs (see the figure loop above), so the body carries markup only.
+    #
+    # The approval gate is unaffected: the Page is created unpublished and only
+    # published after faculty approve, so students can't see either form early.
     public_base = (getattr(settings, "lti_public_url", "") or "").rstrip("/")
     accessible_url = f"{public_base}/canvas/panorama/alt/{job.reflow_job_id}/html"
-    page_body = render_link_stub(
+    inline_cap = int(getattr(settings, "canvas_page_inline_max_chars", 400_000))
+    page_body, page_mode = choose_page_body(
+        rendered_html=rendered.html,
         title=rendered.title,
         accessible_url=accessible_url,
         original_pdf_url=_canvas_file_url(job),
+        inline_cap=inline_cap,
     )
+    if page_mode == "inline":
+        logger.info(
+            "Bridge: publishing %s inline (%d chars, cap %d) for job %s",
+            rendered.title, len(rendered.html), inline_cap, job.reflow_job_id,
+        )
+    else:
+        logger.warning(
+            "Bridge: %s is %d chars, over the %d inline cap — falling back to "
+            "the link stub for job %s",
+            rendered.title, len(rendered.html), inline_cap, job.reflow_job_id,
+        )
 
     # Reuse ONE stable page per file. The bridge used to POST a new page on
     # every (re)conversion, so Canvas accumulated duplicate "…-2/-3/…" pages.

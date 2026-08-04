@@ -38,6 +38,7 @@ from ..canvas.state import (
     clear_edited_html,
     clear_processed,
     get_edited_html,
+    get_file_alias,
     get_job,
     list_approval_events,
     put_edited_html,
@@ -823,10 +824,20 @@ async def _lookup_job_for_file(
       4. If no file_id match exists at all, return None — the watcher
          hasn't seen this file yet.
     """
+    fid = str(canvas_file_id)
+
+    # 0. Content-hash alias. Faculty copy a PDF into the Reflow drop folder,
+    #    so the file we converted has a different Canvas id from the one
+    #    students click in a Module. The watcher hashes content and records
+    #    an alias for every byte-identical copy; honour it first, otherwise
+    #    the accessible version only ever shows on the folder copy.
+    alias = await get_file_alias(redis, course_id, fid)
+    if alias:
+        return alias
+
     jobs = await _all_canvas_jobs_for_course(redis, course_id)
     if not jobs:
         return None
-    fid = str(canvas_file_id)
     # 1. Direct file_id matches
     fid_matches = [j for j in jobs if str(j.get("canvas_file_id")) == fid]
     if fid_matches:
@@ -1309,7 +1320,26 @@ async def pii_decision(
     from ..canvas.reflow_client import ReflowApiError, ReflowClient
 
     reflow = ReflowClient()
-    reviewer = sess.user_email or sess.user_id
+    # Core's PIIDecisionInput declares reviewed_by as required with
+    # min_length=3. An LTI launch always carries ``sub``, so this is
+    # normally the user id at worst — but a platform sending an empty or
+    # 1-2 character sub would otherwise produce a raw 422 from Core with a
+    # Pydantic validation blob in front of faculty. Fail here instead, with
+    # something a human can act on.
+    reviewer = (sess.user_email or sess.user_id or "").strip()
+    if len(reviewer) < 3:
+        logger.error(
+            "pii_decision: no usable reviewer identity for job %s "
+            "(user_email=%r user_id=%r)",
+            job_id, sess.user_email, sess.user_id,
+        )
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "Could not identify the reviewer for this decision. "
+                "Re-launch Reflow from Canvas and try again."
+            ),
+        )
     try:
         await reflow.submit_pii_decision(
             job_id=job_id,

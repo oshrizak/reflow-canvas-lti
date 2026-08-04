@@ -59,6 +59,7 @@ def render(
     # even though the default renderer only ever returns str.
     html_core = str(mistune.html(body_md) or "")
     html_core = _promote_standalone_images_to_figures(html_core)
+    html_core = _add_table_header_scopes(html_core)
 
     parts: list[str] = [BANNER_HTML, html_core]
     if original_pdf_url:
@@ -67,6 +68,49 @@ def render(
         )
 
     return RenderedPage(title=title, html="\n".join(parts))
+
+
+_THEAD_RE = re.compile(r"<thead\b[^>]*>(.*?)</thead>", re.IGNORECASE | re.DOTALL)
+_TBODY_ROW_RE = re.compile(r"<tr\b[^>]*>(.*?)</tr>", re.IGNORECASE | re.DOTALL)
+_BARE_TH_RE = re.compile(r"<th(?![^>]*\bscope=)([^>]*)>", re.IGNORECASE)
+
+
+def _add_table_header_scopes(html_str: str) -> str:
+    """Add ``scope`` to table header cells.
+
+    A ``<th>`` without ``scope`` leaves a screen reader guessing which cells
+    a header governs, which is exactly the association WCAG 2.2 SC 1.3.1
+    (Info and Relationships) is about. Markdown table syntax has no way to
+    express it, so mistune emits bare ``<th>`` and the semantic detail the
+    correction agents worked out gets dropped on the floor at the last step.
+
+    Rules applied:
+      * ``<th>`` inside ``<thead>`` -> ``scope="col"``
+      * a ``<th>`` leading a ``<tbody>`` row -> ``scope="row"``
+
+    Existing ``scope`` attributes are never overwritten — if a future
+    renderer starts emitting them, this becomes a no-op rather than a
+    fight.
+    """
+
+    def _mark(match: re.Match[str], value: str) -> str:
+        inner = _BARE_TH_RE.sub(
+            lambda m: f'<th scope="{value}"{m.group(1)}>', match.group(1)
+        )
+        return match.group(0).replace(match.group(1), inner, 1)
+
+    # Column headers.
+    html_str = _THEAD_RE.sub(lambda m: _mark(m, "col"), html_str)
+
+    # Row headers: a <th> that opens a row outside <thead>.
+    heads = {m.group(1) for m in _THEAD_RE.finditer(html_str)}
+
+    def _row(match: re.Match[str]) -> str:
+        if any(match.group(0) in h for h in heads):
+            return match.group(0)  # already handled as a column header
+        return _mark(match, "row")
+
+    return _TBODY_ROW_RE.sub(_row, html_str)
 
 
 _RELATIVE_IMG_RE = re.compile(r"!\[([^\]]*)\]\((?!https?://|/)([^)]+)\)")

@@ -213,7 +213,10 @@ async def launch(
             if host.endswith(".instructure.com") or host.endswith(".canvaslms.com"):
                 install.canvas_api_base = f"https://{host}/api/v1"
                 install.canvas_domain = host
-        await put_platform(redis, install)
+        # put_platform returns the *merged* record, which carries any
+        # pre-existing revoked_at forward. Keep that return value: it is
+        # what the revocation gate below reads.
+        install = await put_platform(redis, install)
         # Tie this course to its platform so the multi-tenant watcher
         # (Phase 5) knows which credentials to use when scanning it.
         if claims.course_id:
@@ -223,6 +226,24 @@ async def launch(
             "PlatformInstall upsert failed for issuer=%r deployment_id=%r; "
             "launch continues without registry record",
             claims.issuer, claims.deployment_id,
+        )
+
+    # Enforce soft-revocation. mark_revoked() sets revoked_at and put_platform()
+    # preserves it, but until now nothing consulted it -- a revoked platform
+    # kept launching normally, which made revocation a no-op. This gate must
+    # sit OUTSIDE the try/except above: that block swallows every exception on
+    # purpose, and would eat the HTTPException too.
+    if install is not None and install.revoked_at:
+        logger.warning(
+            "launch rejected: platform_id=%s revoked_at=%s issuer=%s",
+            install.platform_id, install.revoked_at, install.issuer,
+        )
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "This Reflow installation has been revoked. "
+                "Contact your Canvas administrator."
+            ),
         )
 
     session_id = new_session_id()

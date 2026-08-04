@@ -199,6 +199,58 @@ class Settings(BaseSettings):
         description="Pre-flight per-document cost estimate in cents (used by the spend cap).",
     )
 
+    # ------------------------------------------------------------------
+    # What Reflow is allowed to convert
+    #
+    # Two independent triggers:
+    #   1. The drop folder — always live. Faculty copy a PDF into it to say
+    #      "convert this one". Explicit, per-document authorisation, and it
+    #      works before anyone has enabled the course.
+    #   2. Full-course scanning — off until a human turns it on for that
+    #      course (see state.set_course_enabled). Only then does the watcher
+    #      sweep Files/Modules/Pages/Assignments/etc.
+    #
+    # Default is opt-in because silent automatic processing of everything a
+    # faculty member ever uploaded is not something a one-time consent
+    # disclaimer can carry.
+    # ------------------------------------------------------------------
+    canvas_require_course_optin: bool = Field(
+        default=True,
+        description=(
+            "When true, full-course scanning requires explicit per-course "
+            "opt-in. The drop folder still works regardless. Set false to "
+            "restore the legacy scan-everything behaviour."
+        ),
+    )
+    canvas_drop_folder_name: str = Field(
+        default="Reflow - Convert to Accessible",
+        description=(
+            "Course Files folder that faculty copy PDFs into to request "
+            "conversion. Created on demand. Kept ASCII — Canvas folder names "
+            "appear in URLs."
+        ),
+    )
+
+    # How large a converted document may be before the bridge stops writing it
+    # inline into the Canvas Page and falls back to a link stub.
+    #
+    # Canvas's hard application limit is 511,999 characters — measured against
+    # csueb.instructure.com with scripts/probe_page_body_limit.py, which returns
+    # HTTP 400 "is too long (maximum is 511,999 characters)". There is no ~8KB
+    # edge-WAF rule, contrary to an earlier assumption.
+    #
+    # The default leaves ~22% headroom under that ceiling for markup the
+    # renderer may add later. At roughly 1.8KB of HTML per PDF page this is
+    # about 220 pages inline, which covers essentially every course document.
+    canvas_page_inline_max_chars: int = Field(
+        ge=0, le=511_999, default=400_000,
+        description=(
+            "Max rendered-HTML length written directly into a Canvas Page. "
+            "Documents above this fall back to a link stub. Canvas rejects "
+            "bodies over 511,999 characters outright. 0 forces stub mode."
+        ),
+    )
+
     # Canvas-side data retention. 0 disables purging.
     canvas_job_retention_days: int = Field(
         ge=0, le=3650, default=90,

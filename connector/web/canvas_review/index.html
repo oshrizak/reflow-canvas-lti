@@ -17,11 +17,33 @@
   .badge-accessibility { background: #e6f0fb; color: #0b3b6e; }   /* WCAG AA: 7.4:1 */
   .badge-pii { background: #fff1d6; color: #6b3a00; }              /* WCAG AA: 7.0:1 */
   .empty { padding: 2rem 0; color: #666; font-style: italic; }
+  /* Course scanning switch. Contrast checked against #f6f8fa: the
+     body text at #33393f is 9.4:1, the muted note at #565d64 is 5.6:1. */
+  .optin { margin-top: 1.25rem; padding: 1rem 1.15rem; border: 1px solid #c9d1d9;
+           border-radius: 8px; background: #f6f8fa; color: #33393f; }
+  .optin h2 { font-size: 1rem; margin: 0 0 0.35rem; }
+  .optin p { margin: 0.35rem 0; }
+  .optin .muted { color: #565d64; font-size: 0.9rem; }
+  .optin button { font: inherit; padding: 0.45rem 0.95rem; border-radius: 5px;
+                  border: 1px solid #1b4b66; background: #1b4b66; color: #fff;
+                  cursor: pointer; }
+  .optin button[aria-pressed="true"] { background: #fff; color: #1b4b66; }
+  .optin button:disabled { opacity: 0.55; cursor: not-allowed; }
+  .optin button:focus-visible { outline: 3px solid #c8a96e; outline-offset: 2px; }
+  .state-on  { font-weight: 600; color: #1d5c2f; }   /* 6.3:1 on #f6f8fa */
+  .state-off { font-weight: 600; color: #8a2a2a; }   /* 7.1:1 on #f6f8fa */
 </style>
 </head>
 <body>
   <h1>Accessible Documents — Review queue</h1>
   <p class="lede">Hello, {{ user_name }}. Each row is a PDF that needs your decision before students see it. The badge tells you what kind of review is being requested.</p>
+
+  <section class="optin" id="optin" hidden aria-labelledby="optin-h">
+    <h2 id="optin-h">Automatic conversion for this course</h2>
+    <p id="optin-state" aria-live="polite"></p>
+    <p class="muted" id="optin-help"></p>
+    <p><button type="button" id="optin-btn" aria-pressed="false" disabled>Loading…</button></p>
+  </section>
 
   <div id="status" aria-live="polite"></div>
   <table id="queue" hidden>
@@ -39,6 +61,76 @@
   const table = document.getElementById("queue");
   const empty = document.getElementById("empty");
   const statusEl = document.getElementById("status");
+
+  // ---- Automatic conversion switch -----------------------------------
+  // Reflow does nothing to a course until someone turns it on here. The
+  // drop folder still works either way, which is how most people start.
+  const optinBox   = document.getElementById("optin");
+  const optinState = document.getElementById("optin-state");
+  const optinHelp  = document.getElementById("optin-help");
+  const optinBtn   = document.getElementById("optin-btn");
+
+  function paintOptin(d) {
+    if (!d.required) { optinBox.hidden = true; return; }   // operator forced always-on
+    optinBox.hidden = false;
+    const on = !!d.enabled;
+    optinState.innerHTML = on
+      ? 'Automatic conversion is <span class="state-on">ON</span> for this course.'
+      : 'Automatic conversion is <span class="state-off">OFF</span> for this course.';
+    let help = on
+      ? "Reflow checks this course's files, modules, pages and assignments and converts new documents as they appear."
+      : "Reflow is not scanning this course. Nothing is converted unless you put it in the drop folder.";
+    if (d.drop_folder) {
+      help += ' Either way, you can copy a single PDF into the "' + d.drop_folder +
+              '" folder in Course Files to convert just that one.';
+    }
+    if (on && d.enabled_by) help += " Turned on by " + d.enabled_by + ".";
+    optinHelp.textContent = help;
+
+    optinBtn.setAttribute("aria-pressed", on ? "true" : "false");
+    optinBtn.textContent = on ? "Turn off automatic conversion" : "Turn on automatic conversion";
+    optinBtn.disabled = !d.can_change;
+    if (!d.can_change) {
+      optinHelp.textContent += " Only an instructor in this course can change this.";
+    }
+  }
+
+  async function loadOptin() {
+    try {
+      const r = await fetch(`/canvas/review/api/optin?course_id=${encodeURIComponent(courseId)}`,
+                            { credentials: "same-origin" });
+      if (!r.ok) { optinBox.hidden = true; return; }
+      paintOptin(await r.json());
+    } catch (_) { optinBox.hidden = true; }
+  }
+
+  optinBtn.addEventListener("click", async () => {
+    const turningOn = optinBtn.getAttribute("aria-pressed") !== "true";
+    optinBtn.disabled = true;
+    optinBtn.textContent = turningOn ? "Turning on…" : "Turning off…";
+    try {
+      const r = await fetch(`/canvas/review/api/optin?course_id=${encodeURIComponent(courseId)}`, {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: turningOn }),
+      });
+      if (!r.ok) {
+        const msg = r.status === 403
+          ? "Only an instructor in this course can change this."
+          : "Could not change the setting. Please try again.";
+        optinState.textContent = msg;
+        optinBtn.disabled = false;
+        return;
+      }
+      await loadOptin();
+    } catch (_) {
+      optinState.textContent = "Could not reach Reflow. Please try again.";
+      optinBtn.disabled = false;
+    }
+  });
+
+  loadOptin();
 
   // The PII gate (``awaiting_approval``) wants a privacy decision before
   // Reflow even starts producing the accessible version. The accessibility

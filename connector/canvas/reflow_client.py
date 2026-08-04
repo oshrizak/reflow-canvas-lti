@@ -134,7 +134,10 @@ class ReflowClient:
         """Return the full status payload.
 
         When ``status == "completed"`` the payload also carries the result
-        URLs (``markdown_url``, ``stored_figures``, ``bundle_url``). The
+        URLs (``markdown_url``, ``figures``, ``bundle_url``). Core names the
+        figure list ``figures`` on ``AgenticCompletedResponse``;
+        ``stored_figures`` is the internal Redis field name and is only
+        accepted as a fallback by callers. The
         bridge worker calls this on every tick for every in-flight job,
         so retries here directly affect whether faculty see stalled dials
         after a transient blip.
