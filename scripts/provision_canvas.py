@@ -232,7 +232,23 @@ def main() -> int:
             ),
             "Enable developer key",
         )
-        print("      on")
+        print("      key state on")
+
+        # Canvas tracks TWO switches. The key's own workflow_state above, and
+        # a per-account binding. The admin UI's ON toggle sets both; the API
+        # does not. With the binding unset, installing by client_id fails with
+        # "This app has been locked by an administrator and cannot be installed
+        # via client ID" — which sounds like a policy decision someone made,
+        # but is just the binding sitting at its default.
+        _check(
+            client.post(
+                f"{base}/api/v1/accounts/{account}/developer_keys/"
+                f"{client_id}/developer_key_account_bindings",
+                json={"developer_key_account_binding": {"workflow_state": "on"}},
+            ),
+            "Bind developer key to account",
+        )
+        print("      account binding on")
 
         print(f"[3/4] Deploying to course {course}...")
         tool_obj = _check(
