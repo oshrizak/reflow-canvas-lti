@@ -81,11 +81,54 @@ def test_words_are_never_split():
             assert word in ("aaa", "bbbbbbbbbb", "ccc"), f"word was split: {word!r}"
 
 
-def test_overlong_word_is_kept_whole_rather_than_truncated():
-    """Truncating would change what the document says."""
+def test_overlong_word_is_divided_not_truncated():
+    """Truncating would change what the document says.
+
+    Found in a real conversion: a URL ran to 48 cells in a 40-cell format,
+    so the embosser wrapped it at an arbitrary column and dropped a stray
+    fragment onto the next line.
+    """
     out = _lay([_para("supercalifragilistic")], cells_per_line=10)
 
-    assert "supercalifragilistic" in out
+    assert "".join(out.split()) .startswith("supercalifragilistic"[:10])
+    assert "supercalifragilistic" in "".join(
+        ln.strip() for ln in out.split("\n") if not ln.strip().isdigit()
+    )
+
+
+def test_urls_divide_at_punctuation():
+    """Transcribers divide a web address after a slash or dot, not mid-word."""
+    url = "https3_/_/www4ebi4ac4uk_/?ornton-srv_/m-csa_/"
+    out = _lay([_para(url)], cells_per_line=40)
+    content = [ln for ln in out.split("\n") if ln.strip() and not ln.strip().isdigit()]
+
+    assert content[0].rstrip().endswith(("_/", "4", "-")), (
+        f"divided mid-token: {content[0]!r}"
+    )
+
+
+def test_no_line_ever_exceeds_the_cell_width():
+    """The whole format depends on this; a real BRF had 26 lines over 40.
+
+    The page-number line was the main offender — the form feed was being
+    appended to it, making every page's last line one cell too wide.
+    """
+    url = "https3_/_/www4ebi4ac4uk_/?ornton-srv_/m-csa_/"
+    blocks = [_para(url)] + [_para(f"word{i} " * 8) for i in range(30)]
+    out = _lay(blocks, cells_per_line=40, lines_per_page=25)
+
+    for line in out.split("\n"):
+        assert len(line) <= 40, f"{len(line)} cells: {line!r}"
+
+
+def test_form_feed_sits_on_its_own_line():
+    blocks = [_para(f"line{i}") for i in range(12)]
+    out = _lay(blocks, cells_per_line=20, lines_per_page=5)
+
+    assert f"\n{FORM_FEED}\n" in out
+    for line in out.split("\n"):
+        if FORM_FEED in line:
+            assert line == FORM_FEED, "the form feed must not share a line with text"
 
 
 def test_lines_respect_the_cell_width():

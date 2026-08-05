@@ -73,6 +73,38 @@ _INDENTS = {
 }
 
 
+# Points at which an over-long token may be divided. Web addresses are the
+# case that actually occurs in course material, and transcribers divide
+# them after a slash or a dot rather than mid-word.
+_BREAK_AFTER = "_/4-="
+
+
+def _break_long_token(token: str, width: int) -> list[str]:
+    """Split a token that cannot fit on one line.
+
+    A URL in braille ASCII routinely exceeds 40 cells, and leaving it long
+    means the embosser or display wraps it at an arbitrary column — which
+    puts a stray fragment at the start of the next line. Divide at
+    punctuation where possible, since that is where a transcriber would,
+    and only fall back to a hard split when there is no such point.
+    """
+    if width < 1 or len(token) <= width:
+        return [token]
+    pieces: list[str] = []
+    rest = token
+    while len(rest) > width:
+        cut = max((rest.rfind(ch, 1, width + 1) for ch in _BREAK_AFTER), default=-1)
+        if cut < 1:
+            cut = width
+        else:
+            cut += 1  # keep the punctuation on the line it belongs to
+        pieces.append(rest[:cut])
+        rest = rest[cut:]
+    if rest:
+        pieces.append(rest)
+    return pieces
+
+
 def _wrap(cells: str, width: int, first_indent: int, runover: int) -> list[str]:
     """Wrap translated braille without ever splitting a word.
 
@@ -82,7 +114,14 @@ def _wrap(cells: str, width: int, first_indent: int, runover: int) -> list[str]:
     being silently truncated — losing characters would change what the
     document says.
     """
-    words = [w for w in cells.split(" ") if w]
+    # Size divisions against the deeper of the two indents: a paragraph
+    # indents its first line and a list its runover, and a token sized for
+    # one still overflows the other.
+    usable = width - max(first_indent, runover)
+    words: list[str] = []
+    for word in cells.split(" "):
+        if word:
+            words.extend(_break_long_token(word, usable))
     if not words:
         return []
     lines: list[str] = []
@@ -176,4 +215,8 @@ def _paginate(lines: list[str], width: int, per_page: int) -> str:
         chunk = chunk + [""] * (usable - len(chunk))
         chunk.append(number.rjust(width)[:width])
         pages.append("\n".join(chunk))
-    return (FORM_FEED + "\n").join(pages) + "\n"
+    # The form feed goes on a line of its own. Appending it to the
+    # page-number line makes that line one cell wider than the format,
+    # which an embosser or a 40-cell display then wraps — putting a stray
+    # character at the start of the next line on every page.
+    return f"\n{FORM_FEED}\n".join(pages) + "\n"
