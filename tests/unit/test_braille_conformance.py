@@ -27,6 +27,7 @@ from connector.canvas.braille import (
     build_braille_xml,
     latex_to_mathml,
     render_brf,
+    resolve_math_table,
 )
 from connector.canvas.markdown_to_html import RenderedPage
 
@@ -203,6 +204,31 @@ def test_title_becomes_the_document_heading():
 
     assert "Module 1 Overview" in xml
     assert "<h1>" in xml
+
+
+def test_math_table_is_probed_not_assumed(tmp_path, monkeypatch):
+    """Hardcoding a table name is how the previous version broke.
+
+    It asked for ``nemeth.ctb``, which Debian's liblouis packaging does
+    not ship, so every document containing an equation failed to
+    translate. Preference order is honoured; absence falls through.
+    """
+    monkeypatch.setattr("connector.canvas.braille._TABLE_DIRS", (tmp_path,))
+
+    (tmp_path / "en-ueb-math.ctb").write_text("x")
+    assert resolve_math_table() == "en-ueb-math.ctb"
+
+    (tmp_path / "nemeth.ctb").write_text("x")
+    assert resolve_math_table() == "nemeth.ctb", (
+        "Nemeth is the house style at many US agencies; prefer it when present"
+    )
+
+
+def test_missing_math_table_does_not_crash(tmp_path, monkeypatch):
+    """A missing table must not take the whole document down with it."""
+    monkeypatch.setattr("connector.canvas.braille._TABLE_DIRS", (tmp_path,))
+
+    assert resolve_math_table() in ("nemeth.ctb", "en-ueb-math.ctb", "en-us-mathtext.ctb")
 
 
 def test_missing_braille_tooling_fails_with_an_actionable_message(monkeypatch):

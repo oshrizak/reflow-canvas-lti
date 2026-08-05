@@ -20,13 +20,21 @@ What the manual asks for, and what this produces:
     used ``en-us-g2.ctb``, which is pre-2016 EBAE. UEB has been the US
     standard since 2016.
 
-``Nemeth for the maths, UEB for the words``
+``A maths code for the maths, UEB for the words``
     The old code took a document containing *any* maths and pushed the
     entire thing — every paragraph of English prose — through
-    ``nemeth.ctb``. Nemeth is a mathematical notation; running prose
-    through it produces something a reader cannot read. Here each maths
-    expression is emitted as MathML and translated in Nemeth, inside a
-    document whose prose is UEB, per BANA's *Nemeth within UEB* guidance.
+    ``nemeth.ctb``. That table does not exist in Debian's liblouis
+    packaging, so in practice those documents failed translation outright;
+    where the table does exist, the result is worse than a failure,
+    because prose transcribed in a mathematical notation looks like
+    perfectly ordinary braille to anyone checking it visually.
+
+    Here each expression is emitted as MathML and translated with a maths
+    table, inside a document whose prose is UEB. BANA permits either
+    Nemeth within UEB contexts or UEB Technical throughout;
+    :func:`resolve_math_table` prefers Nemeth when the build provides it
+    and otherwise uses UEB Technical (``en-ueb-math.ctb``). Both are
+    correct braille. What matters is that neither is applied to prose.
 
 ``Structure survives``
     Headings, ordered and unordered lists, tables and figure descriptions
@@ -85,11 +93,51 @@ _MATH_RUN_RE = re.compile(
 # print page numbers placed inline in the text.
 _PRINT_PAGE_RE = re.compile(r"\[\s*Page\s+([0-9ivxlcdm]+)\s*\]", re.IGNORECASE)
 
+# Where liblouis keeps its tables on Debian/Ubuntu images.
+_TABLE_DIRS = (
+    Path("/usr/share/liblouis/tables"),
+    Path("/usr/local/share/liblouis/tables"),
+)
+
+# Maths codes, in order of preference.
+#
+# BANA permits two treatments of technical material in a UEB document:
+# Nemeth within UEB contexts, or UEB Technical throughout. Nemeth is still
+# the house style at many US agencies for STEM, so it wins when present —
+# but Debian's ``liblouis-data`` ships only ``nemethdefs.cti``, a
+# definitions fragment that is not a usable table, so most deployments get
+# UEB Technical. Both are correct braille; what matters is that neither is
+# used for prose.
+_MATH_TABLE_CANDIDATES = ("nemeth.ctb", "en-ueb-math.ctb", "en-us-mathtext.ctb")
+
 _STRUCTURAL = {
     "h1", "h2", "h3", "h4", "h5", "h6",
     "p", "ul", "ol", "li", "table", "thead", "tbody", "tr", "th", "td",
     "blockquote", "figure", "figcaption",
 }
+
+
+def resolve_math_table(candidates: tuple[str, ...] = _MATH_TABLE_CANDIDATES) -> str:
+    """Pick the first maths table this liblouis build actually ships.
+
+    Hardcoding a table name is how the previous implementation broke: it
+    asked for ``nemeth.ctb``, which this build does not contain, so every
+    document with an equation failed at translation. Probing turns a hard
+    failure into a documented substitution.
+
+    Returns the last candidate if none are found, so the caller still gets
+    a name to put in an error message rather than an empty string.
+    """
+    for name in candidates:
+        for directory in _TABLE_DIRS:
+            if (directory / name).exists():
+                return name
+    logger.warning(
+        "No maths braille table found (looked for %s). Equations will be "
+        "transcribed with the literary table, which is wrong for technical "
+        "material — install liblouis tables.", ", ".join(candidates),
+    )
+    return candidates[-1]
 
 
 def _strip_delimiters(fragment: str) -> tuple[str, bool]:
@@ -288,6 +336,8 @@ def _run_file2brl(
             "-f", str(CONFIG_PATH),
             f"-Ccellsperline={cells_per_line}",
             f"-Clinesperpage={lines_per_page}",
+            # Overrides the config so the image's actual maths table wins.
+            f"-Cmathexprtable={resolve_math_table()}",
         ],
         input=xml.encode("utf-8"),
         capture_output=True,
@@ -337,7 +387,7 @@ def _fallback_plain_brf(
 
             latex = preprocess_chemistry(latex)
         if latex:
-            chunks.append(_translate(lou, "nemeth.ctb", latex))
+            chunks.append(_translate(lou, resolve_math_table(), latex))
         pos = m.end()
     tail = text[pos:]
     if tail.strip():

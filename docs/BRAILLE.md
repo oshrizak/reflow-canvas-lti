@@ -21,7 +21,7 @@ canonical HTML
        LaTeX / mhchem -> MathML
   -> file2brl  (connector/canvas/braille_ueb_bana.cfg)
        literaryTextTable  en-ueb-g2.ctb   prose
-       mathexprTable      nemeth.ctb      expressions
+       mathexprTable      en-ueb-math.ctb expressions (see below)
   -> BRF, 40 cells x 25 lines
 ```
 
@@ -37,11 +37,21 @@ every paragraph of English — through `nemeth.ctb`, producing a file a
 braille reader could not read. The output still looked like plausible
 ASCII to anyone checking it visually.
 
-The correct treatment, per BANA's *Guidance for Transcription Using the
-Nemeth Code within UEB Contexts*, is UEB throughout with Nemeth applied to
-the expressions. `file2brl` does this when the maths arrives as MathML,
-which is why the LaTeX in the canonical HTML is converted server-side —
-MathJax only renders in a browser, and there is no browser here.
+The correct treatment is UEB prose with a maths code applied to the
+expressions. BANA permits either Nemeth within UEB contexts or UEB
+Technical throughout. `resolve_math_table()` probes the image and prefers
+`nemeth.ctb` when present, falling back to `en-ueb-math.ctb` (UEB
+Technical) — Debian's `liblouis-data` ships only `nemethdefs.cti`, a
+definitions fragment that is not a usable table, so most deployments get
+UEB Technical. Both are correct braille.
+
+Probing rather than hardcoding matters: the previous implementation named
+`nemeth.ctb` directly, and on a build without it every document
+containing an equation failed to translate at all.
+
+`file2brl` applies the maths table when the maths arrives as MathML, which
+is why the LaTeX in the canonical HTML is converted server-side — MathJax
+only renders in a browser, and there is no browser here.
 
 Chemistry (`\ce{...}`) is expanded by `connector/canvas/chemistry.py`
 before conversion, so `\ce{H2O}` reaches Nemeth as a subscripted formula
@@ -52,6 +62,7 @@ rather than the literal characters `H`, `2`, `O`.
 | Requirement | Where it is implemented |
 |---|---|
 | UEB, not pre-2016 EBAE | `literaryTextTable en-ueb-g2.ctb` |
+| Maths in a maths code, prose in UEB | `resolve_math_table()` + `mathexprTable` |
 | Heading structure preserved | `_BrailleXmlBuilder` keeps `h1`–`h6` |
 | Bullets and numbering preserved | `ul` / `ol` / `li` kept as markup |
 | Figure text *before* the graphic | `_flush_figure` defers image output to `</figure>` |

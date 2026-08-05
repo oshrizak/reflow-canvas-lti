@@ -23,47 +23,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   hardcoded one university's domains, which silently broke the page for every
   other institution.
 
-### Fixed
-
-- **Braille output is now a transcription, not a text dump.** BRF is
-  produced by `file2brl` (liblouisutdml) from structured XML instead of
-  `lou_translate` from flattened text, so headings, lists, tables, figure
-  descriptions and print page numbers survive into the braille, with BANA
-  page geometry. Two defects this corrects: the base table was
-  `en-us-g2.ctb` (pre-2016 EBAE) where the standard is UEB; and a document
-  containing *any* maths had **all** of its prose transcribed in Nemeth,
-  a mathematical notation, rendering it unreadable. Maths now reaches
-  Nemeth as MathML inside a UEB document, per BANA's "Nemeth within UEB"
-  guidance. Adds `latex2mathml`. See [`docs/BRAILLE.md`](docs/BRAILLE.md).
-- **`preprocess_chemistry` moved to `connector/canvas/chemistry.py`** so
-  the braille path no longer imports matplotlib to run a regex. Re-exported
-  from `math_render` for compatibility.
-- **Token scope erosion on refresh.** Canvas does not carry consented scopes
-  across a refresh when the developer key enforces scopes; it substitutes the
-  key's defaults. The refresh grant now sends the full scope list, and that
-  list is a single shared object so the authorize and refresh legs cannot
-  drift apart. Symptom was a tool that worked for exactly one hour after each
-  consent, then 401'd on every read.
-- **IPv4 literals in generated pages.** A bare dotted quad anywhere in a page
-  body matches SSRF signatures in managed WAF rule sets, so Canvas Cloud's CDN
-  rejected the write before Canvas saw it — with an HTML 403 indistinguishable
-  from a permissions failure. Dots are now entity-encoded at render time;
-  links resolve and text reads identically.
-- **Canvas error bodies are logged.** `CanvasApiError` carries the response
-  body and non-404 failures log it at `WARNING`. It was previously `DEBUG`,
-  which left production logs showing a status code and nothing else.
-- **Deleted documents are forgotten.** When Canvas returns 404 for a source
-  file, the bridge purges the job record, review-queue entry, processed marker
-  and page mapping. Records used to outlive their source and retry forever.
-
-### Changed
-
-- Removed internal working documents (`FIXES.md`, `PORTING_BRIEF.md`) and
-  one-off diagnostic spikes from `scripts/`. Institution-specific hostnames in
-  comments and examples replaced with neutral placeholders.
-- `scripts/` now ships in the Docker image — operator tooling was previously
-  unrunnable in the container where it is needed.
-
 - **PDF figure extraction from the source PDF** (`connector/canvas/pdf_figures.py`,
   `connector/tools/reprocess_figures.py`). Bypasses Reflow's vision-pipeline
   S3 PNGs (which carry a tile/segmentation grid overlay) and pulls clean
@@ -144,6 +103,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Braille output is now a transcription, not a text dump.** BRF is
+  produced by `file2brl` (liblouisutdml) from structured XML instead of
+  `lou_translate` from flattened text, so headings, lists, tables, figure
+  descriptions and print page numbers survive into the braille, with BANA
+  page geometry. Two defects this corrects: the base table was
+  `en-us-g2.ctb` (pre-2016 EBAE) where the standard is UEB; and a document
+  containing *any* maths had **all** of its prose transcribed in Nemeth,
+  a mathematical notation — and since `nemeth.ctb` is not in Debian's
+  liblouis packaging, those documents in fact failed to translate at all.
+  Maths now reaches a maths table as MathML inside a UEB document; the
+  table is probed at runtime (Nemeth when available, otherwise UEB
+  Technical) rather than hardcoded. Adds `latex2mathml`. See
+  [`docs/BRAILLE.md`](docs/BRAILLE.md).
+- **`preprocess_chemistry` moved to `connector/canvas/chemistry.py`** so
+  the braille path no longer imports matplotlib to run a regex. Re-exported
+  from `math_render` for compatibility.
+- **Token scope erosion on refresh.** Canvas does not carry consented scopes
+  across a refresh when the developer key enforces scopes; it substitutes the
+  key's defaults. The refresh grant now sends the full scope list, and that
+  list is a single shared object so the authorize and refresh legs cannot
+  drift apart. Symptom was a tool that worked for exactly one hour after each
+  consent, then 401'd on every read.
+- **IPv4 literals in generated pages.** A bare dotted quad anywhere in a page
+  body matches SSRF signatures in managed WAF rule sets, so Canvas Cloud's CDN
+  rejected the write before Canvas saw it — with an HTML 403 indistinguishable
+  from a permissions failure. Dots are now entity-encoded at render time;
+  links resolve and text reads identically.
+- **Canvas error bodies are logged.** `CanvasApiError` carries the response
+  body and non-404 failures log it at `WARNING`. It was previously `DEBUG`,
+  which left production logs showing a status code and nothing else.
+- **Deleted documents are forgotten.** When Canvas returns 404 for a source
+  file, the bridge purges the job record, review-queue entry, processed marker
+  and page mapping. Records used to outlive their source and retry forever.
+
 - **PII decision endpoint URL.** The connector used to POST to
   `/api/v1/documents/{job}/pii/approve`, which Reflow Core never had —
   Core returned 405 Method Not Allowed, the connector wrapped that as 502,
@@ -184,6 +177,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   threshold under load, secrets audit fires CRITICAL when keys are missing.
 - **CI**: 69 tests passing (63 unit + 6 integration). Ruff + mypy clean
   across 52 source files.
+
+
+### Changed
+- Removed internal working documents (`FIXES.md`, `PORTING_BRIEF.md`) and
+  one-off diagnostic spikes from `scripts/`. Institution-specific hostnames in
+  comments and examples replaced with neutral placeholders.
+- `scripts/` now ships in the Docker image — operator tooling was previously
+  unrunnable in the container where it is needed.
+
 
 ## [0.1.0] — 2026-06-18
 
