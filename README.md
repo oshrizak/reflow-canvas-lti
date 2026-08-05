@@ -76,7 +76,7 @@ connector consumes.
 | ePub | ebooklib | EPUB3 |
 | Audio (MP3) | Amazon Polly | Requires `AWS_DEFAULT_REGION` + IAM credentials with `polly:SynthesizeSpeech` |
 | Translate | Anthropic Claude (Sonnet 4.5) | Requires `ANTHROPIC_API_KEY`. Prompt explicitly preserves LaTeX math and `\ce{}` chemistry markup verbatim. |
-| Braille (BRF) | liblouisutdml (`file2brl`) | Structured transcription, not flat text: UEB contracted braille for prose, with a maths code (Nemeth where available, otherwise UEB Technical) applied *only* to expressions. Headings, lists, tables and figure descriptions survive; print page numbers preserved; BANA page geometry (40 cells × 25 lines). LaTeX is converted to MathML server-side. See [`docs/BRAILLE.md`](docs/BRAILLE.md). |
+| Braille (BRF) | liblouis (`lou_translate`) + in-house BANA layout | Structured transcription, not flat text: UEB contracted braille for prose, with a maths code (Nemeth where available, otherwise UEB Technical) applied *only* to expressions. Centred headings, 3-1 paragraphs, 1-3 lists, figure descriptions with the caption first, print page numbers, 40×25 pages with form feeds, words never split. See [`docs/BRAILLE.md`](docs/BRAILLE.md). |
 
 ### Behind the scenes
 

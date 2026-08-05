@@ -64,9 +64,11 @@ import logging
 import re
 import shutil
 import subprocess
+from collections.abc import Callable
 from html.parser import HTMLParser
 from pathlib import Path
 
+from .braille_layout import Block, Run, layout_blocks
 from .markdown_to_html import RenderedPage
 
 logger = logging.getLogger(__name__)
@@ -74,8 +76,6 @@ logger = logging.getLogger(__name__)
 # BANA's standard braille page: 40 cells wide, 25 lines deep.
 CELLS_PER_LINE = 40
 LINES_PER_PAGE = 25
-
-CONFIG_PATH = Path(__file__).parent / "braille_ueb_bana.cfg"
 
 # Maths and mhchem chemistry runs inside body text. Mirrors the detection
 # regex in ``alt_formats`` — kept local so this module has no import cycle
@@ -283,8 +283,136 @@ class _BrailleXmlBuilder(HTMLParser):
         self._flush_figure()
 
 
+class _BlockBuilder(HTMLParser):
+    """Canonical HTML -> the block list the layout engine typesets.
+
+    Same structural decisions as the XML builder, expressed as data rather
+    than markup so the formatting can happen in Python. Inline
+    presentation is dropped: braille has its own emphasis conventions and
+    carrying HTML styling into it produces noise, not meaning.
+    """
+
+    _HEADINGS = {"h1": 1, "h2": 2, "h3": 3, "h4": 4, "h5": 5, "h6": 6}
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.blocks: list[Block] = []
+        self._skip = 0
+        self._current: Block | None = None
+        self._figure_alt: list[str] = []
+
+    def _open(self, kind: str, level: int = 0) -> None:
+        self._close()
+        self._current = Block(kind=kind, level=level)
+
+    def _close(self) -> None:
+        if self._current and any(r.text.strip() for r in self._current.runs):
+            self.blocks.append(self._current)
+        self._current = None
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag in ("script", "style"):
+            self._skip += 1
+            return
+        if tag == "img":
+            self._figure_alt.append((dict(attrs).get("alt") or "").strip())
+            return
+        if tag in self._HEADINGS:
+            self._open("heading", self._HEADINGS[tag])
+        elif tag in ("p", "blockquote", "figcaption"):
+            self._open("paragraph")
+        elif tag == "li":
+            self._open("list_item")
+        elif tag == "tr":
+            self._open("table_row")
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag in ("script", "style"):
+            self._skip = max(0, self._skip - 1)
+            return
+        if tag == "figure":
+            self._close()
+            self._flush_figure()
+        elif tag in self._HEADINGS or tag in (
+            "p", "blockquote", "figcaption", "li", "tr"
+        ):
+            self._close()
+
+    def handle_data(self, data: str) -> None:
+        if self._skip or not data.strip():
+            return
+        if self._current is None:
+            self._open("paragraph")
+        assert self._current is not None
+        for text, is_math, page in _split_runs(data):
+            if page:
+                self._close()
+                self.blocks.append(Block(kind="page_number", page_label=page))
+                self._open("paragraph")
+            elif text.strip():
+                self._current.runs.append(Run(text=text, is_math=is_math))
+
+    def _flush_figure(self) -> None:
+        for alt in self._figure_alt:
+            # Named so a reader knows this stands in for a graphic rather
+            # than being part of the running text. An undescribed image is
+            # announced, never silently dropped.
+            note = f"Image description: {alt}" if alt else "Image without a description."
+            self.blocks.append(Block(kind="figure", runs=[Run(text=note)]))
+        self._figure_alt.clear()
+
+    def close(self) -> None:  # type: ignore[override]
+        super().close()
+        self._close()
+        self._flush_figure()
+
+
+def _split_runs(text: str) -> list[tuple[str, bool, str]]:
+    """Split body text into (text, is_math, print_page_label) pieces."""
+    out: list[tuple[str, bool, str]] = []
+    pos = 0
+    for m in _MATH_RUN_RE.finditer(text):
+        out.extend(_split_pages(text[pos: m.start()]))
+        latex, is_chem = _strip_delimiters(m.group(0))
+        if is_chem:
+            from .chemistry import preprocess_chemistry
+
+            latex = preprocess_chemistry(latex)
+        if latex:
+            out.append((latex, True, ""))
+        pos = m.end()
+    out.extend(_split_pages(text[pos:]))
+    return out
+
+
+def _split_pages(text: str) -> list[tuple[str, bool, str]]:
+    out: list[tuple[str, bool, str]] = []
+    pos = 0
+    for m in _PRINT_PAGE_RE.finditer(text):
+        out.append((text[pos: m.start()], False, ""))
+        out.append(("", False, m.group(1)))
+        pos = m.end()
+    out.append((text[pos:], False, ""))
+    return out
+
+
+def build_blocks(rendered: RenderedPage) -> list[Block]:
+    """Canonical HTML -> structural blocks, title first."""
+    builder = _BlockBuilder()
+    builder.feed(rendered.html or "")
+    builder.close()
+    title = (rendered.title or "").strip()
+    head = [Block(kind="heading", level=1, runs=[Run(text=title)])] if title else []
+    return head + builder.blocks
+
+
 def build_braille_xml(rendered: RenderedPage) -> str:
-    """Canonical HTML -> the structured XML handed to ``file2brl``."""
+    """Canonical HTML -> structured XML.
+
+    Retained because it is the interchange format liblouisutdml wants, and
+    because the conformance tests assert against it — but the BRF pipeline
+    no longer uses it; see :mod:`connector.canvas.braille_layout` for why.
+    """
     builder = _BrailleXmlBuilder()
     builder.feed(rendered.html or "")
     builder.close()
@@ -305,49 +433,84 @@ def render_brf(
     cells_per_line: int = CELLS_PER_LINE,
     lines_per_page: int = LINES_PER_PAGE,
 ) -> bytes:
-    """Produce a BRF, structured when possible and readable regardless."""
-    xml = build_braille_xml(rendered)
+    """Produce a structured, paginated BRF.
 
-    tool = shutil.which("file2brl")
-    if tool and CONFIG_PATH.exists():
-        try:
-            return _run_file2brl(tool, xml, cells_per_line, lines_per_page)
-        except Exception as exc:  # noqa: BLE001 — fall back, never fail hard
-            logger.warning(
-                "file2brl failed (%s); falling back to unstructured UEB. "
-                "The document will still be readable but will lose braille "
-                "page layout and heading structure.", exc,
-            )
-    elif not tool:
-        logger.warning(
-            "file2brl not found — install liblouisutdml-bin for structured, "
-            "BANA-formatted braille. Falling back to unstructured UEB."
+    Translation is liblouis's job; layout is ours. See
+    :mod:`connector.canvas.braille_layout` for why the formatting is not
+    delegated to liblouisutdml.
+    """
+    lou = shutil.which("lou_translate")
+    if not lou:
+        raise RuntimeError(
+            "lou_translate not found — install liblouis-bin (and "
+            "liblouisutdml-bin for the braille tables) to produce braille."
         )
 
-    return _fallback_plain_brf(rendered, grade=grade, cells_per_line=cells_per_line)
+    blocks = build_blocks(rendered)
+    if not blocks:
+        raise RuntimeError("Nothing to braille-translate")
 
+    literary = "en-ueb-g2.ctb" if grade == 2 else "en-ueb-g1.ctb"
+    math_table = resolve_math_table()
+    translate = _make_translator(lou, literary, math_table, blocks)
 
-def _run_file2brl(
-    tool: str, xml: str, cells_per_line: int, lines_per_page: int
-) -> bytes:
-    proc = subprocess.run(
-        [
-            tool,
-            "-f", str(CONFIG_PATH),
-            f"-Ccellsperline={cells_per_line}",
-            f"-Clinesperpage={lines_per_page}",
-            # Overrides the config so the image's actual maths table wins.
-            f"-Cmathexprtable={resolve_math_table()}",
-        ],
-        input=xml.encode("utf-8"),
-        capture_output=True,
-        timeout=120,
-        check=True,
+    body = layout_blocks(
+        blocks,
+        translate,
+        cells_per_line=cells_per_line,
+        lines_per_page=lines_per_page,
     )
-    out = proc.stdout
-    if not out.strip():
-        raise RuntimeError("file2brl produced no output")
-    return out
+    return body.encode("ascii", errors="replace")
+
+
+def _make_translator(
+    lou: str, literary: str, math_table: str, blocks: list[Block]
+) -> Callable[[str, bool], str]:
+    """Pre-translate every distinct run, then serve them from a cache.
+
+    One subprocess per run would mean hundreds of process spawns for a
+    chapter. liblouis translates line by line, so all the prose can go
+    through in a single call and come back in the same order.
+    """
+    prose: list[str] = []
+    maths: list[str] = []
+    for block in blocks:
+        if block.kind == "page_number":
+            prose.append(f"page {block.page_label}")
+            continue
+        for run in block.runs:
+            (maths if run.is_math else prose).append(run.text)
+
+    cache: dict[tuple[bool, str], str] = {}
+    for texts, table, is_math in ((prose, literary, False), (maths, math_table, True)):
+        uniq = [t for t in dict.fromkeys(texts) if t.strip()]
+        if not uniq:
+            continue
+        # Newlines delimit the batch, so no run may contain one.
+        flat = [" ".join(t.split()) for t in uniq]
+        out = _translate(lou, table, "\n".join(flat)).split("\n")
+        if len(out) != len(flat):
+            # Line counts drifted — fall back to one call per run rather
+            # than risk pairing a translation with the wrong source text.
+            logger.info(
+                "Batched braille translation returned %d lines for %d inputs; "
+                "translating individually.", len(out), len(flat),
+            )
+            for original, cleaned in zip(uniq, flat, strict=True):
+                cache[(is_math, original)] = _translate(lou, table, cleaned)
+        else:
+            for original, cells in zip(uniq, out, strict=True):
+                cache[(is_math, original)] = cells.strip()
+
+    def translate(text: str, is_math: bool) -> str:
+        if not text.strip():
+            return ""
+        hit = cache.get((is_math, text))
+        if hit is not None:
+            return hit
+        return _translate(lou, math_table if is_math else literary, text)
+
+    return translate
 
 
 def _fallback_plain_brf(

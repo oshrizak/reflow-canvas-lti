@@ -49,10 +49,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   MathJax (with the mhchem extension) when LaTeX delimiters or `\ce{}` are
   present in the rendered body. Inline-`$...$` regex tightened to skip prose
   with money values.
-- **Math-aware Braille** — `render_braille_brf` routes math-bearing documents
-  through liblouis's Nemeth code (`nemeth.ctb`) instead of `en-us-g2.ctb`.
-  LaTeX delimiters stripped first so Nemeth transcribes the symbols, not
-  the fence characters.
 - **PII review surfaced in the LTI tool's queue.** `awaiting_approval` jobs
   now join the per-course pending set alongside `awaiting_review` jobs;
   index.html renders distinct badges (PII review vs Accessibility review) and
@@ -103,19 +99,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **Braille output is now a transcription, not a text dump.** BRF is
-  produced by `file2brl` (liblouisutdml) from structured XML instead of
-  `lou_translate` from flattened text, so headings, lists, tables, figure
-  descriptions and print page numbers survive into the braille, with BANA
-  page geometry. Two defects this corrects: the base table was
+- **Braille output is now a transcription, not a text dump.** BRF is built
+  from structural blocks — headings, paragraphs, lists, table rows, figure
+  descriptions, print page numbers — translated per run and typeset to BANA
+  page geometry (40x25, form feeds, braille page numbers, words never split
+  across a line or page). Two defects this corrects: the base table was
   `en-us-g2.ctb` (pre-2016 EBAE) where the standard is UEB; and a document
-  containing *any* maths had **all** of its prose transcribed in Nemeth,
-  a mathematical notation — and since `nemeth.ctb` is not in Debian's
+  containing *any* maths had **all** of its prose transcribed in Nemeth, a
+  mathematical notation — and since `nemeth.ctb` is absent from Debian's
   liblouis packaging, those documents in fact failed to translate at all.
-  Maths now reaches a maths table as MathML inside a UEB document; the
-  table is probed at runtime (Nemeth when available, otherwise UEB
-  Technical) rather than hardcoded. Adds `latex2mathml`. See
-  [`docs/BRAILLE.md`](docs/BRAILLE.md).
+  The maths table is now probed at runtime (Nemeth when available, otherwise
+  UEB Technical) rather than hardcoded.
+
+  Layout is done in `connector/canvas/braille_layout.py` rather than by
+  liblouisutdml (`file2brl`), which on this packaging fails to compile its
+  own semantic-action files and returns exit status 0 with zero bytes of
+  output in every input mode. See [`docs/BRAILLE.md`](docs/BRAILLE.md).
 - **`preprocess_chemistry` moved to `connector/canvas/chemistry.py`** so
   the braille path no longer imports matplotlib to run a regex. Re-exported
   from `math_render` for compatibility.
