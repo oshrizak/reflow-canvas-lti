@@ -89,30 +89,9 @@ def render_latex_to_svg_data_uri(
         return None
 
 
-def preprocess_chemistry(ce_content: str) -> str:
-    """Translate the common mhchem subset into matplotlib-friendly LaTeX.
-
-    Handled:
-      * Digit-after-element subscripts: ``H2O`` -> ``H_{2}O``,
-        ``CaCl2`` -> ``CaCl_{2}``.
-      * Reaction arrows: ``->`` -> ``\\rightarrow``,
-        ``<->`` -> ``\\rightleftharpoons``.
-      * Charges left as-is — they're already in ``^{...}`` form when
-        Reflow's pipeline emits them.
-
-    Not handled (will pass through as plain text, possibly mangled):
-      * Stoichiometry coefficients prefixing formulas (``2H2O``)
-      * Isotope mass-number / charge sandwiches (``^{14}C``)
-      * Bond notation (``-``, ``=``, ``\\equiv``)
-      * Phases (``(s)``, ``(aq)``)
-    """
-    s = ce_content
-    # Equilibrium ``<->`` must run before the reaction arrow ``->`` or
-    # the right half (``->``) gets gobbled by the simpler rule.
-    s = re.sub(r"<->", r"\\rightleftharpoons ", s)
-    s = re.sub(r"->", r"\\rightarrow ", s)
-    s = re.sub(r"([A-Za-z\)\]])(\d+)", r"\1_{\2}", s)
-    return s
+# Moved to ``chemistry`` so the braille pipeline can use it without
+# importing matplotlib. Re-exported here for backwards compatibility.
+from .chemistry import preprocess_chemistry  # noqa: E402
 
 
 def _replace_or_keep(

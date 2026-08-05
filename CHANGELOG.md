@@ -25,6 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Braille output is now a transcription, not a text dump.** BRF is
+  produced by `file2brl` (liblouisutdml) from structured XML instead of
+  `lou_translate` from flattened text, so headings, lists, tables, figure
+  descriptions and print page numbers survive into the braille, with BANA
+  page geometry. Two defects this corrects: the base table was
+  `en-us-g2.ctb` (pre-2016 EBAE) where the standard is UEB; and a document
+  containing *any* maths had **all** of its prose transcribed in Nemeth,
+  a mathematical notation, rendering it unreadable. Maths now reaches
+  Nemeth as MathML inside a UEB document, per BANA's "Nemeth within UEB"
+  guidance. Adds `latex2mathml`. See [`docs/BRAILLE.md`](docs/BRAILLE.md).
+- **`preprocess_chemistry` moved to `connector/canvas/chemistry.py`** so
+  the braille path no longer imports matplotlib to run a regex. Re-exported
+  from `math_render` for compatibility.
 - **Token scope erosion on refresh.** Canvas does not carry consented scopes
   across a refresh when the developer key enforces scopes; it substitutes the
   key's defaults. The refresh grant now sends the full scope list, and that

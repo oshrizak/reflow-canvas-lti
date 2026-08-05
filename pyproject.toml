@@ -32,6 +32,10 @@ dependencies = [
     "mdformat>=1.0.0",
     # Alt-format generators
     "ebooklib>=0.18",
+    # LaTeX -> MathML for braille. The canonical HTML stores LaTeX because
+    # MathJax renders it in the browser; braille transcription happens
+    # server-side with no browser, and liblouisutdml reads MathML.
+    "latex2mathml>=3.77",
     "ocrmypdf>=16.0",
     "pdf2image>=1.17.0",
     "pymupdf>=1.24",

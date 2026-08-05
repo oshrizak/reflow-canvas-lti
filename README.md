@@ -76,7 +76,7 @@ connector consumes.
 | ePub | ebooklib | EPUB3 |
 | Audio (MP3) | Amazon Polly | Requires `AWS_DEFAULT_REGION` + IAM credentials with `polly:SynthesizeSpeech` |
 | Translate | Anthropic Claude (Sonnet 4.5) | Requires `ANTHROPIC_API_KEY`. Prompt explicitly preserves LaTeX math and `\ce{}` chemistry markup verbatim. |
-| Braille (BRF) | liblouis | Auto-routes to Nemeth code (math/chemistry) or en-us-g2 (prose) based on document content |
+| Braille (BRF) | liblouisutdml (`file2brl`) | Structured transcription, not flat text: UEB contracted braille for prose with Nemeth applied *only* to maths expressions (BANA "Nemeth within UEB"). Headings, lists, tables and figure descriptions survive; print page numbers preserved; BANA page geometry (40 cells × 25 lines). LaTeX is converted to MathML server-side. See [`docs/BRAILLE.md`](docs/BRAILLE.md). |
 
 ### Behind the scenes
 
@@ -265,6 +265,9 @@ tests/
 - [`docs/DEPLOY.md`](docs/DEPLOY.md) — image, env, networking, health.
 - [`docs/PILOT_RUNBOOK.md`](docs/PILOT_RUNBOOK.md) — end-to-end smoke
   test and the first-week failure modes.
+- [`docs/BRAILLE.md`](docs/BRAILLE.md) — how BRF is produced, why prose
+  and maths use different braille tables, and what a production manual
+  requires of the output.
 - [`docs/TROUBLESHOOTING.md`](docs/TROUBLESHOOTING.md) — failure modes
   seen in production and how to tell them apart. Read this first when a
   Canvas call returns 403 or 401; several of them look like permissions

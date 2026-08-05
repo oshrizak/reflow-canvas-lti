@@ -517,84 +517,30 @@ def render_ocr_pdf(original_pdf_bytes: bytes, archival: bool = True) -> bytes:
     return out_buf.getvalue()
 
 
-def render_braille_brf(rendered: RenderedPage, grade: int = 2, lang_table: str | None = None) -> bytes:
-    """Convert the canonical HTML's text to BRF (Braille Ready File).
+def render_braille_brf(
+    rendered: RenderedPage, grade: int = 2, lang_table: str | None = None
+) -> bytes:
+    """Convert the canonical HTML to BRF (Braille Ready File).
 
-    Uses ``liblouis`` for translation. Table selection:
-      * Math / chemistry detected -> ``nemeth.ctb`` (Nemeth code, the
-        US Braille standard for math + science). Handles superscripts,
-        subscripts, Greek letters, operators, and chemical formulas
-        the contracted-text tables would mangle.
-      * Otherwise grade 2 (contracted)  -> ``en-us-g2.ctb``
-      * grade 1 (uncontracted)          -> ``en-us-g1.ctb``
+    Delegates to :mod:`connector.canvas.braille`, which formats the
+    *document* — headings, lists, tables, figure descriptions, print page
+    numbers — through liblouisutdml, rather than translating a flattened
+    string. See that module for why the distinction matters and how the
+    UEB/Nemeth split works.
 
-    Explicit ``lang_table`` overrides the auto-pick. The LaTeX
-    delimiters (``$...$`` etc.) are stripped before translation — the
-    Nemeth table transcribes the math content itself, not the markdown
-    fence characters around it.
-
-    Output is suitable for refreshable Braille displays and Braille
-    embossers. Raises RuntimeError with a friendly message if liblouis
-    isn't installed.
+    ``lang_table`` is accepted for backwards compatibility and ignored;
+    table selection is now per-run (UEB for prose, Nemeth for maths)
+    rather than per-document, and a single whole-document table is the
+    behaviour this replaced.
     """
-    import shutil
-    import subprocess
+    from .braille import render_brf
 
-    text = html_to_plain_text(rendered)
-    if not text:
-        raise RuntimeError("Nothing to braille-translate")
-
-    lou = shutil.which("lou_translate")
-    if not lou:
-        raise RuntimeError(
-            "lou_translate not found; install liblouis-bin in the Dockerfile"
+    if lang_table is not None:
+        logger.info(
+            "render_braille_brf: lang_table=%r ignored — tables are now "
+            "selected per run (UEB prose, Nemeth maths).", lang_table,
         )
-
-    if lang_table is None:
-        if has_math_content(rendered):
-            # Nemeth handles math symbols natively; stripping the LaTeX
-            # delimiters leaves the math content as plain symbols the
-            # table knows how to transcribe (E=mc^2, integrals, fractions
-            # written as inline LaTeX become legible Nemeth Braille).
-            lang_table = "nemeth.ctb"
-            text = _strip_latex_delimiters(text)
-        else:
-            lang_table = "en-us-g2.ctb" if grade == 2 else "en-us-g1.ctb"
-
-    try:
-        proc = subprocess.run(
-            [lou, lang_table],
-            input=text.encode("utf-8"),
-            capture_output=True,
-            timeout=60,
-            check=True,
-        )
-    except subprocess.CalledProcessError as exc:
-        raise RuntimeError(
-            f"liblouis translation failed: {exc.stderr.decode('utf-8', errors='replace')[:300]}"
-        ) from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("liblouis translation timed out") from exc
-    translated = proc.stdout.decode("utf-8", errors="replace")
-
-    # BRF expects ASCII-art Braille (40-char lines is convention).
-    # liblouis returns a single string; wrap to 40 cols per Braille standard.
-    lines: list[str] = []
-    for para in translated.split("\n"):
-        if not para:
-            lines.append("")
-            continue
-        cur = ""
-        for word in para.split(" "):
-            if len(cur) + len(word) + 1 <= 40:
-                cur = (cur + " " + word).strip() if cur else word
-            else:
-                if cur:
-                    lines.append(cur)
-                cur = word if len(word) <= 40 else word[:40]
-        if cur:
-            lines.append(cur)
-    return ("\n".join(lines) + "\n").encode("ascii", errors="replace")
+    return render_brf(rendered, grade=grade)
 
 
 def _strip_latex_delimiters(text: str) -> str:
